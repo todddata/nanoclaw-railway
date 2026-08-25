@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public PostHog project key in upstream diagnostic examples"
+paths = [
+  '''(^|/)\.claude/skills/migrate-nanoclaw/diagnostics\.md$''',
+  '''(^|/)\.claude/skills/setup/diagnostics\.md$''',
+  '''(^|/)\.claude/skills/update-nanoclaw/diagnostics\.md$''',
+]
