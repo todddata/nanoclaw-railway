@@ -89,23 +89,10 @@ function prepareWorkspace(
     );
   }
 
-  // Sync skills
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-  const skillsDst = path.join(claudeDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
-    }
-  }
-
-  // Sync .mcp.json so agent-runner can discover additional MCP servers
-  const mcpJsonSrc = path.join(process.cwd(), '.mcp.json');
-  if (fs.existsSync(mcpJsonSrc)) {
-    fs.copyFileSync(mcpJsonSrc, path.join(claudeDir, '.mcp.json'));
-  }
+  // Railway runs the restricted agent profile. Do not copy dynamic skills or
+  // MCP configuration into its session: those capabilities are intentionally
+  // unavailable, and copying immutable image content over persisted sessions
+  // can fail once the hardened image marks application files read-only.
 
   // IPC directory
   const ipcDir = resolveGroupIpcPath(group.folder);
