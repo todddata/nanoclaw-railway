@@ -24,10 +24,12 @@ function writeConfig(config: unknown, name?: string): string {
 }
 
 beforeEach(() => {
+  delete process.env.SENDER_ALLOWLIST_JSON;
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'allowlist-test-'));
 });
 
 afterEach(() => {
+  delete process.env.SENDER_ALLOWLIST_JSON;
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -66,6 +68,17 @@ describe('loadSenderAllowlist', () => {
     });
     const cfg = loadSenderAllowlist(p);
     expect(cfg.default.allow).toEqual(['alice', 'bob']);
+    expect(cfg.default.mode).toBe('drop');
+  });
+
+  it('loads Railway JSON configuration from the environment', () => {
+    process.env.SENDER_ALLOWLIST_JSON = JSON.stringify({
+      default: { allow: ['U_TODD'], mode: 'drop' },
+      chats: {},
+      logDenied: true,
+    });
+    const cfg = loadSenderAllowlist();
+    expect(cfg.default.allow).toEqual(['U_TODD']);
     expect(cfg.default.mode).toBe('drop');
   });
 

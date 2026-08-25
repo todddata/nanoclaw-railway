@@ -40,10 +40,23 @@ vi.mock('@slack/bolt', () => ({
 
     client = {
       auth: {
-        test: vi.fn().mockResolvedValue({ user_id: 'U_BOT_123' }),
+        test: vi.fn().mockResolvedValue({
+          user_id: 'U_BOT_123',
+          bot_id: 'B_MY_BOT',
+        }),
       },
       chat: {
-        postMessage: vi.fn().mockResolvedValue(undefined),
+        postMessage: vi.fn().mockResolvedValue({
+          ok: true,
+          ts: '1704067200.999999',
+        }),
+        update: vi.fn().mockResolvedValue({ ok: true }),
+        delete: vi.fn().mockResolvedValue({ ok: true }),
+      },
+      assistant: {
+        threads: {
+          setStatus: vi.fn().mockResolvedValue({ ok: true }),
+        },
       },
       conversations: {
         list: vi.fn().mockResolvedValue({
@@ -302,6 +315,27 @@ describe('SlackChannel', () => {
           is_from_me: true,
           is_bot_message: true,
           sender_name: 'Jonesy',
+        }),
+      );
+    });
+
+    it('does not treat another app bot as this NanoClaw instance', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        subtype: 'bot_message',
+        botId: 'B_OTHER_BOT',
+        text: 'Untrusted bot response',
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          is_from_me: false,
+          is_bot_message: true,
         }),
       );
     });
@@ -769,23 +803,79 @@ describe('SlackChannel', () => {
   // --- setTyping ---
 
   describe('setTyping', () => {
-    it('resolves without error (no-op)', async () => {
+    it('sets a Slack assistant loading status for the active thread', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
+      await channel.connect();
+      await triggerMessageEvent(
+        createMessageEvent({ ts: '1704067200.123456' }),
+      );
 
-      // Should not throw — Slack has no bot typing indicator API
-      await expect(
-        channel.setTyping('slack:C0123456789', true),
-      ).resolves.toBeUndefined();
+      await channel.setTyping('slack:C0123456789', true);
+
+      expect(appRef.current.client.assistant.threads.setStatus).toHaveBeenCalledWith({
+        channel_id: 'C0123456789',
+        thread_ts: '1704067200.123456',
+        status: 'is working on your response…',
+        loading_messages: [
+          'Thinking…',
+          'Checking the details…',
+          'Writing a response…',
+        ],
+      });
+      expect(appRef.current.client.chat.postMessage).toHaveBeenCalledWith({
+        channel: 'C0123456789',
+        thread_ts: '1704067200.123456',
+        text: ':hourglass_flowing_sand: Working on your response…',
+      });
     });
 
-    it('accepts false without error', async () => {
+    it('clears the Slack assistant loading status', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
+      await channel.connect();
+      await triggerMessageEvent(
+        createMessageEvent({ ts: '1704067200.123456' }),
+      );
 
-      await expect(
-        channel.setTyping('slack:C0123456789', false),
-      ).resolves.toBeUndefined();
+      await channel.setTyping('slack:C0123456789', false);
+
+      expect(appRef.current.client.assistant.threads.setStatus).toHaveBeenCalledWith({
+        channel_id: 'C0123456789',
+        thread_ts: '1704067200.123456',
+        status: '',
+        loading_messages: undefined,
+      });
+    });
+
+    it('does nothing when there is no active inbound thread', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      await channel.setTyping('slack:C0123456789', true);
+
+      expect(
+        appRef.current.client.assistant.threads.setStatus,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('replaces the visible working message with the final response', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+      await triggerMessageEvent(
+        createMessageEvent({ ts: '1704067200.123456' }),
+      );
+
+      await channel.setTyping('slack:C0123456789', true);
+      await channel.sendMessage('slack:C0123456789', 'Finished response');
+
+      expect(appRef.current.client.chat.update).toHaveBeenCalledWith({
+        channel: 'C0123456789',
+        ts: '1704067200.999999',
+        text: 'Finished response',
+      });
     });
   });
 

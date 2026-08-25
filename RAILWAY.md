@@ -1,12 +1,14 @@
 # Deploy and Host NanoClaw on Railway
 
-NanoClaw is a personal AI assistant powered by Claude that connects to messaging channels (Slack, Telegram, Discord, WhatsApp, Gmail). It runs Claude Agent SDK in isolated processes, giving each group its own memory, skills, and tools - including web browsing, file management, and scheduled tasks.
+> **Data Methods hardened profile:** The production image in this fork is Slack-only and uses the restricted Railway agent profile documented in [SECURITY-RAILWAY.md](SECURITY-RAILWAY.md). Other channel instructions below describe upstream capabilities but those dependencies are not installed in the final Railway image.
+
+NanoClaw is a personal AI assistant powered by Claude. This deployment connects through Slack Socket Mode and gives each registered conversation separate memory and scheduled tasks.
 
 ## About Hosting NanoClaw
 
-Deploying NanoClaw on Railway involves running a single Node.js service that spawns Claude Agent SDK processes for each incoming message. A persistent volume stores authentication state, SQLite databases, group memory, and conversation history. The service uses a multi-stage Docker build that bundles Chromium (for web browsing), the Claude Code CLI, and the agent-runner into one image.
+Deploying NanoClaw on Railway involves running a single Node.js service that spawns restricted Claude Agent SDK child processes for incoming messages. A persistent volume stores SQLite databases, group memory, and conversation history. Railway builds the outer service from a digest-pinned multi-stage Dockerfile.
 
-All five channels (Slack, Telegram, Discord, WhatsApp, Gmail) are pre-installed. Set the env vars for the channels you want - channels without tokens are silently skipped at startup. No post-deploy setup commands needed.
+Only Slack production dependencies are installed in the final image. `NANOCLAW_CHANNELS=slack` is set in the Dockerfile.
 
 ## Common Use Cases
 
@@ -30,8 +32,10 @@ All five channels (Slack, Telegram, Discord, WhatsApp, Gmail) are pre-installed.
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | API key for Claude model access |
 | `ASSISTANT_NAME` | No | Bot display name (default: `Andy`). Also used to auto-register the main group: on first startup, the bot looks for a chat matching this name and registers it as the main group. |
+| `REQUIRE_TRIGGER_IN_MAIN` | No | Set to `true` to require `@ASSISTANT_NAME` in the main channel as well as other channels. |
+| `SENDER_ALLOWLIST_JSON` | No | JSON sender policy. Example: `{"default":{"allow":["U123"],"mode":"drop"},"chats":{},"logDenied":true}` accepts messages only from Slack user `U123`. |
 | `TZ` | No | Timezone for message timestamps and scheduled tasks (default: system timezone or `UTC`) |
-| `GITHUB_TOKEN` | No | GitHub personal access token for installing skills from private repos |
+| `GITHUB_TOKEN` | No | Not forwarded to Railway agents; host-managed skill installation is disabled in the hardened profile. |
 
 A Railway volume must be mounted at `/data` for persistent storage (auth state, SQLite, group files).
 

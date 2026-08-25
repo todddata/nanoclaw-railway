@@ -21,8 +21,11 @@ import {
   query,
   HookCallback,
   PreCompactHookInput,
+  PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+
+import { createWorkspacePolicyHook } from './tool-policy.js';
 
 interface ContainerInput {
   prompt: string;
@@ -67,6 +70,7 @@ const WORKSPACE_GROUP = process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/grou
 const WORKSPACE_GLOBAL = process.env.NANOCLAW_WORKSPACE_GLOBAL || '/workspace/global';
 const WORKSPACE_EXTRA = process.env.NANOCLAW_WORKSPACE_EXTRA || '/workspace/extra';
 const IPC_POLL_MS = 500;
+const RESTRICTED_RUNTIME = process.env.NANOCLAW_RESTRICTED_RUNTIME === '1';
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -443,11 +447,12 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  const restrictedRuntime = RESTRICTED_RUNTIME;
 
   // Load additional MCP servers from .mcp.json (synced from host)
   const extraMcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> = {};
   const extraMcpToolPatterns: string[] = [];
-  if (fs.existsSync(MCP_JSON_PATH)) {
+  if (!restrictedRuntime && fs.existsSync(MCP_JSON_PATH)) {
     try {
       const mcpJson = JSON.parse(fs.readFileSync(MCP_JSON_PATH, 'utf-8'));
       for (const [name, config] of Object.entries(mcpJson.mcpServers || {})) {
@@ -504,32 +509,49 @@ async function runQuery(
             append: globalClaudeMd,
           }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read',
-        'Write',
-        'Edit',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-        'TeamCreate',
-        'TeamDelete',
-        'SendMessage',
-        'TodoWrite',
-        'ToolSearch',
-        'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*',
-        ...extraMcpToolPatterns,
-      ],
+      allowedTools: restrictedRuntime
+        ? [
+            'Read',
+            'Write',
+            'Edit',
+            'Glob',
+            'Grep',
+            'WebSearch',
+            'WebFetch',
+            'mcp__nanoclaw__send_message',
+            'mcp__nanoclaw__schedule_task',
+            'mcp__nanoclaw__list_tasks',
+            'mcp__nanoclaw__pause_task',
+            'mcp__nanoclaw__resume_task',
+            'mcp__nanoclaw__cancel_task',
+            'mcp__nanoclaw__update_task',
+          ]
+        : [
+            'Bash',
+            'Read',
+            'Write',
+            'Edit',
+            'Glob',
+            'Grep',
+            'WebSearch',
+            'WebFetch',
+            'Task',
+            'TaskOutput',
+            'TaskStop',
+            'TeamCreate',
+            'TeamDelete',
+            'SendMessage',
+            'TodoWrite',
+            'ToolSearch',
+            'Skill',
+            'NotebookEdit',
+            'mcp__nanoclaw__*',
+            ...extraMcpToolPatterns,
+          ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
-      settingSources: ['project', 'user'],
+      settingSources: restrictedRuntime ? [] : ['project', 'user'],
       mcpServers: {
         nanoclaw: {
           command: 'node',
@@ -538,6 +560,7 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            NANOCLAW_RESTRICTED_RUNTIME: restrictedRuntime ? '1' : '0',
           },
         },
         ...extraMcpServers,
@@ -547,15 +570,28 @@ async function runQuery(
           { hooks: [createPreCompactHook(containerInput.assistantName)] },
         ],
         PreToolUse: [
-          {
-            matcher: 'Bash',
-            hooks: [
-              createSanitizeBashHook(
-                ((containerInput as unknown as Record<string, unknown>)
-                  .secretKeyNames as string[]) || [],
-              ),
-            ],
-          },
+          ...(restrictedRuntime
+            ? ['Read', 'Write', 'Edit', 'Glob', 'Grep'].map((matcher) => ({
+                matcher,
+                hooks: [
+                  createWorkspacePolicyHook({
+                    group: WORKSPACE_GROUP,
+                    global: WORKSPACE_GLOBAL || undefined,
+                    extra: WORKSPACE_EXTRA || undefined,
+                  }),
+                ],
+              }))
+            : [
+                {
+                  matcher: 'Bash',
+                  hooks: [
+                    createSanitizeBashHook(
+                      ((containerInput as unknown as Record<string, unknown>)
+                        .secretKeyNames as string[]) || [],
+                    ),
+                  ],
+                },
+              ]),
         ],
       },
     },
@@ -594,9 +630,7 @@ async function runQuery(
       resultCount++;
       const textResult =
         'result' in message ? (message as { result?: string }).result : null;
-      log(
-        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
-      );
+      log(`Result #${resultCount}: subtype=${message.subtype}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -734,7 +768,11 @@ async function main(): Promise<void> {
   }
 
   // Script phase: run script before waking agent
-  if (containerInput.script && containerInput.isScheduledTask) {
+  if (
+    containerInput.script &&
+    containerInput.isScheduledTask &&
+    !RESTRICTED_RUNTIME
+  ) {
     log('Running task script...');
     const scriptResult = await runScript(containerInput.script);
 

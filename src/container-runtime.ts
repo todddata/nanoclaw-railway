@@ -15,6 +15,11 @@ export const PROXY_BIND_HOST =
   process.env.CREDENTIAL_PROXY_HOST || detectProxyBindHost();
 
 function detectProxyBindHost(): string {
+  // Railway agents are child processes in the same service container. Binding
+  // to the private-network interface would expose credential injection to every
+  // other service in the project without providing any benefit.
+  if (process.env.RAILWAY_ENVIRONMENT) return '127.0.0.1';
+
   if (os.platform() === 'darwin') return '127.0.0.1';
 
   // WSL uses Docker Desktop (same VM routing as macOS) — loopback is correct.

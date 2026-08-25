@@ -14,6 +14,7 @@ import {
   MAX_MESSAGES_PER_PROMPT,
   ONECLI_URL,
   POLL_INTERVAL,
+  REQUIRE_TRIGGER_IN_MAIN,
   SLACK_MAIN_CHANNEL_ID,
   TIMEZONE,
 } from './config.js';
@@ -124,6 +125,23 @@ function loadState(): void {
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
+
+  // Existing main groups may retain the old default trigger after the
+  // assistant is renamed. Keep the persisted trigger aligned when main-group
+  // mention gating is enabled.
+  if (REQUIRE_TRIGGER_IN_MAIN) {
+    for (const [jid, group] of Object.entries(registeredGroups)) {
+      if (group.isMain && group.trigger !== DEFAULT_TRIGGER) {
+        const updated = { ...group, trigger: DEFAULT_TRIGGER };
+        registeredGroups[jid] = updated;
+        setRegisteredGroup(jid, updated);
+        logger.info(
+          { jid, oldTrigger: group.trigger, trigger: DEFAULT_TRIGGER },
+          'Updated main group trigger',
+        );
+      }
+    }
+  }
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
     'State loaded',
@@ -253,8 +271,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
-  // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
+  // Require a trigger for non-main groups and optionally for the main group.
+  const needsTrigger =
+    group.requiresTrigger !== false ||
+    (isMainGroup && REQUIRE_TRIGGER_IN_MAIN);
+  if (needsTrigger) {
     const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
     const hasTrigger = missedMessages.some(
@@ -513,7 +534,9 @@ async function startMessageLoop(): Promise<void> {
           }
 
           const isMainGroup = group.isMain === true;
-          const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
+          const needsTrigger =
+            group.requiresTrigger !== false ||
+            (isMainGroup && REQUIRE_TRIGGER_IN_MAIN);
 
           // For non-main groups, only act on trigger messages.
           // Non-trigger messages accumulate in DB and get pulled as
@@ -607,6 +630,11 @@ function recoverPendingMessages(): void {
 }
 
 function ensureContainerSystemRunning(): void {
+  // Railway runs agents as child Node.js processes via railway-runner.ts.
+  // Docker-in-Docker is unavailable there, so only probe and clean up the
+  // local container runtime for non-Railway deployments.
+  if (IS_RAILWAY) return;
+
   ensureContainerRuntimeRunning();
   cleanupOrphans();
 }
@@ -639,14 +667,14 @@ async function main(): Promise<void> {
     ensureOneCLIAgent(jid, group);
   }
 
-  restoreRemoteControl();
+  if (!IS_RAILWAY) restoreRemoteControl();
 
   // Sync skills from lock file (re-clones registered repos so skills
   // survive deploys and stay up-to-date with their source repos)
-  await syncSkillsOnStartup();
+  if (!IS_RAILWAY) await syncSkillsOnStartup();
 
   // Sync persistent MCP servers (rebuild .mcp.json from lock file)
-  await syncMcpOnStartup();
+  if (!IS_RAILWAY) await syncMcpOnStartup();
 
   // Start credential proxy (containers/child processes route API calls through this)
   let proxyServer: { close: () => void } | undefined;
@@ -672,6 +700,19 @@ async function main(): Promise<void> {
     chatJid: string,
     msg: NewMessage,
   ): Promise<void> {
+    if (IS_RAILWAY) {
+      const channel = findChannel(channels, chatJid);
+      logger.warn(
+        { chatJid, sender: msg.sender },
+        'Remote control rejected: disabled on Railway',
+      );
+      await channel?.sendMessage(
+        chatJid,
+        'Remote Control is disabled on Railway for security.',
+      );
+      return;
+    }
+
     const group = registeredGroups[chatJid];
     if (!group?.isMain) {
       logger.warn(
@@ -711,17 +752,9 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
-      // Remote control commands — intercept before storage
-      const trimmed = msg.content.trim();
-      if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
-        handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
-          logger.error({ err, chatJid }, 'Remote control command error'),
-        );
-        return;
-      }
-
-      // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
+      // Enforce drop-mode authorization before command handling or storage.
+      // Only this NanoClaw instance's own messages bypass the sender check.
+      if (!msg.is_from_me && registeredGroups[chatJid]) {
         const cfg = loadSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&
@@ -736,6 +769,16 @@ async function main(): Promise<void> {
           return;
         }
       }
+
+      // Remote control commands — intercept before storage
+      const trimmed = msg.content.trim();
+      if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
+        handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Remote control command error'),
+        );
+        return;
+      }
+
       storeMessage(msg);
     },
     onChatMetadata: (
@@ -744,7 +787,32 @@ async function main(): Promise<void> {
       name?: string,
       channel?: string,
       isGroup?: boolean,
-    ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    ) => {
+      storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
+
+      // Slack calls this before it checks registeredGroups(), allowing the
+      // first authorized @NanoClaw message in a new channel or DM to work.
+      if (channel === 'slack' && !registeredGroups[chatJid]) {
+        const channelId = chatJid.replace(/^slack:/, '');
+        const displayName =
+          name || (isGroup ? `slack-${channelId}` : `dm-${channelId}`);
+        const safeName = displayName
+          .replace(/[^a-zA-Z0-9-]/g, '-')
+          .toLowerCase()
+          .slice(0, 50);
+        registerGroup(chatJid, {
+          name: displayName,
+          folder: `slack_${safeName}`,
+          trigger: `@${ASSISTANT_NAME}`,
+          added_at: new Date().toISOString(),
+          requiresTrigger: true,
+        });
+        logger.info(
+          { jid: chatJid, name: displayName },
+          'Auto-registered newly discovered Slack conversation',
+        );
+      }
+    },
     registeredGroups: () => registeredGroups,
   };
 

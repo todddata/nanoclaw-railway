@@ -33,6 +33,7 @@ export class SlackChannel implements Channel {
 
   private app: App;
   private botUserId: string | undefined;
+  private botId: string | undefined;
   private connected = false;
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
@@ -41,6 +42,12 @@ export class SlackChannel implements Channel {
   // When a user posts in a channel, we start a thread on their message.
   // When a user posts in an existing thread, we reply in that thread.
   private activeThread = new Map<string, string>();
+  // Visible placeholder reply while NanoClaw is processing. The final answer
+  // replaces this message so users always see immediate activity.
+  private workingMessages = new Map<
+    string,
+    { ts: string; threadTs: string }
+  >();
 
   private opts: SlackChannelOpts;
 
@@ -94,10 +101,16 @@ export class SlackChannel implements Channel {
       if (!groups[jid]) return;
 
       const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
+      const isOwnBotMessage =
+        msg.user === this.botUserId ||
+        (!!msg.bot_id && msg.bot_id === this.botId);
 
       let senderName: string;
-      if (isBotMessage) {
+      if (isOwnBotMessage) {
         senderName = ASSISTANT_NAME;
+      } else if (isBotMessage) {
+        senderName =
+          ('username' in msg && msg.username) || msg.bot_id || 'unknown bot';
       } else {
         senderName =
           (msg.user ? await this.resolveUserName(msg.user) : undefined) ||
@@ -137,7 +150,7 @@ export class SlackChannel implements Channel {
         sender_name: senderName,
         content,
         timestamp,
-        is_from_me: isBotMessage,
+        is_from_me: isOwnBotMessage,
         is_bot_message: isBotMessage,
         thread_id: threadId,
       });
@@ -153,6 +166,7 @@ export class SlackChannel implements Channel {
     try {
       const auth = await this.app.client.auth.test();
       this.botUserId = auth.user_id as string;
+      this.botId = auth.bot_id as string;
       logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
     } catch (err) {
       logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');
@@ -181,16 +195,40 @@ export class SlackChannel implements Channel {
 
     try {
       const threadTs = this.activeThread.get(channelId);
+      const workingMessage = this.workingMessages.get(channelId);
+      let replacedWorkingMessage = false;
+
+      if (workingMessage && workingMessage.threadTs === threadTs) {
+        try {
+          await this.app.client.chat.update({
+            channel: channelId,
+            ts: workingMessage.ts,
+            text: text.slice(0, MAX_MESSAGE_LENGTH),
+          });
+          this.workingMessages.delete(channelId);
+          replacedWorkingMessage = true;
+        } catch (err) {
+          logger.warn(
+            { jid, err },
+            'Failed to replace Slack working message; sending a new reply',
+          );
+          this.workingMessages.delete(channelId);
+          await this.app.client.chat
+            .delete({ channel: channelId, ts: workingMessage.ts })
+            .catch(() => undefined);
+        }
+      }
 
       // Slack limits messages to ~4000 characters; split if needed
-      if (text.length <= MAX_MESSAGE_LENGTH) {
+      if (!replacedWorkingMessage && text.length <= MAX_MESSAGE_LENGTH) {
         await this.app.client.chat.postMessage({
           channel: channelId,
           text,
           thread_ts: threadTs,
         });
       } else {
-        for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
+        const start = replacedWorkingMessage ? MAX_MESSAGE_LENGTH : 0;
+        for (let i = start; i < text.length; i += MAX_MESSAGE_LENGTH) {
           await this.app.client.chat.postMessage({
             channel: channelId,
             text: text.slice(i, i + MAX_MESSAGE_LENGTH),
@@ -221,11 +259,63 @@ export class SlackChannel implements Channel {
     await this.app.stop();
   }
 
-  // Slack does not expose a typing indicator API for bots.
-  // This no-op satisfies the Channel interface so the orchestrator
-  // doesn't need channel-specific branching.
-  async setTyping(_jid: string, _isTyping: boolean): Promise<void> {
-    // no-op: Slack Bot API has no typing indicator endpoint
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    const channelId = jid.replace(/^slack:/, '');
+    const threadTs = this.activeThread.get(channelId);
+
+    // Scheduled tasks and startup work may not have an inbound Slack thread.
+    if (!this.connected || !threadTs) return;
+
+    try {
+      await this.app.client.assistant.threads.setStatus({
+        channel_id: channelId,
+        thread_ts: threadTs,
+        status: isTyping ? 'is working on your response…' : '',
+        loading_messages: isTyping
+          ? ['Thinking…', 'Checking the details…', 'Writing a response…']
+          : undefined,
+      });
+    } catch (err) {
+      logger.warn(
+        { jid, err },
+        isTyping
+          ? 'Failed to set Slack response status'
+          : 'Failed to clear Slack response status',
+      );
+    }
+
+    if (isTyping) {
+      if (!this.workingMessages.has(channelId)) {
+        try {
+          const result = await this.app.client.chat.postMessage({
+            channel: channelId,
+            thread_ts: threadTs,
+            text: ':hourglass_flowing_sand: Working on your response…',
+          });
+          if (result.ts) {
+            this.workingMessages.set(channelId, {
+              ts: result.ts,
+              threadTs,
+            });
+          }
+        } catch (err) {
+          logger.warn({ jid, err }, 'Failed to post Slack working message');
+        }
+      }
+    } else {
+      const workingMessage = this.workingMessages.get(channelId);
+      if (workingMessage) {
+        this.workingMessages.delete(channelId);
+        try {
+          await this.app.client.chat.delete({
+            channel: channelId,
+            ts: workingMessage.ts,
+          });
+        } catch (err) {
+          logger.warn({ jid, err }, 'Failed to clear Slack working message');
+        }
+      }
+    }
   }
 
   /**

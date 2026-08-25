@@ -19,6 +19,7 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const restrictedRuntime = process.env.NANOCLAW_RESTRICTED_RUNTIME === '1';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -58,7 +59,10 @@ server.tool(
       ),
   },
   async (args) => {
-    const targetJid = isMain && args.target_jid ? args.target_jid : chatJid;
+    const targetJid =
+      !restrictedRuntime && isMain && args.target_jid
+        ? args.target_jid
+        : chatJid;
     const data: Record<string, string | undefined> = {
       type: 'message',
       chatJid: targetJid,
@@ -133,6 +137,18 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       ),
   },
   async (args) => {
+    if (restrictedRuntime && args.script) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Scheduled shell scripts are disabled in the restricted Railway runtime.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
     // Validate schedule_value before writing IPC
     if (args.schedule_type === 'cron') {
       try {
@@ -386,6 +402,18 @@ server.tool(
       ),
   },
   async (args) => {
+    if (restrictedRuntime && args.script !== undefined) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Scheduled shell scripts are disabled in the restricted Railway runtime.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
     // Validate schedule_value if provided
     if (
       args.schedule_type === 'cron' ||
