@@ -1,6 +1,6 @@
 # Railway security profile
 
-This fork deploys NanoClaw as a Slack-only personal assistant on Railway. Railway builds and runs the outer service from `Dockerfile.railway`; it does not provide NanoClaw's normal per-agent Docker boundary inside that service.
+This fork deploys NanoClaw as a Slack-only personal assistant on Railway. Railway builds and runs the outer service from `Dockerfile`; it does not provide NanoClaw's normal per-agent Docker boundary inside that service.
 
 ## Enforced controls
 
