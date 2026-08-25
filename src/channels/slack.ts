@@ -44,10 +44,7 @@ export class SlackChannel implements Channel {
   private activeThread = new Map<string, string>();
   // Visible placeholder reply while NanoClaw is processing. The final answer
   // replaces this message so users always see immediate activity.
-  private workingMessages = new Map<
-    string,
-    { ts: string; threadTs: string }
-  >();
+  private workingMessages = new Map<string, { ts: string; threadTs: string }>();
 
   private opts: SlackChannelOpts;
 

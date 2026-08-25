@@ -13,7 +13,9 @@ function retentionDays(name: string, fallback: number): number {
 }
 
 function olderThan(filePath: string, days: number): boolean {
-  return Date.now() - fs.statSync(filePath).mtimeMs > days * 24 * 60 * 60 * 1000;
+  return (
+    Date.now() - fs.statSync(filePath).mtimeMs > days * 24 * 60 * 60 * 1000
+  );
 }
 
 function walkFiles(root: string): string[] {
@@ -52,7 +54,9 @@ function runCleanup(): void {
     let removed = 0;
 
     if (fs.existsSync(sessionsRoot)) {
-      for (const entry of fs.readdirSync(sessionsRoot, { withFileTypes: true })) {
+      for (const entry of fs.readdirSync(sessionsRoot, {
+        withFileTypes: true,
+      })) {
         if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
         const claudeRoot = path.join(sessionsRoot, entry.name, '.claude');
         removed += removeOldFiles(
@@ -64,14 +68,20 @@ function runCleanup(): void {
         );
         removed += removeOldFiles(path.join(claudeRoot, 'debug'), debugDays);
         removed += removeOldFiles(path.join(claudeRoot, 'todos'), debugDays);
-        removed += removeOldFiles(path.join(claudeRoot, 'telemetry'), sessionDays);
+        removed += removeOldFiles(
+          path.join(claudeRoot, 'telemetry'),
+          sessionDays,
+        );
       }
     }
 
     if (fs.existsSync(GROUPS_DIR)) {
       for (const entry of fs.readdirSync(GROUPS_DIR, { withFileTypes: true })) {
         if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-        removed += removeOldFiles(path.join(GROUPS_DIR, entry.name, 'logs'), logDays);
+        removed += removeOldFiles(
+          path.join(GROUPS_DIR, entry.name, 'logs'),
+          logDays,
+        );
       }
     }
 

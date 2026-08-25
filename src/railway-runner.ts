@@ -17,10 +17,7 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
-import {
-  ContainerInput,
-  ContainerOutput,
-} from './container-runner.js';
+import { ContainerInput, ContainerOutput } from './container-runner.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';

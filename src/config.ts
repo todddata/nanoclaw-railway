@@ -23,8 +23,8 @@ export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER ||
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const REQUIRE_TRIGGER_IN_MAIN =
-  (process.env.REQUIRE_TRIGGER_IN_MAIN ||
-    envConfig.REQUIRE_TRIGGER_IN_MAIN) === 'true';
+  (process.env.REQUIRE_TRIGGER_IN_MAIN || envConfig.REQUIRE_TRIGGER_IN_MAIN) ===
+  'true';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 

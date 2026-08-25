@@ -36,14 +36,17 @@ export function loadSenderAllowlist(
   const filePath = pathOverride ?? SENDER_ALLOWLIST_PATH;
 
   let raw: string;
-  const envConfig = pathOverride ? undefined : process.env.SENDER_ALLOWLIST_JSON;
+  const envConfig = pathOverride
+    ? undefined
+    : process.env.SENDER_ALLOWLIST_JSON;
   if (envConfig) {
     raw = envConfig;
   } else {
     try {
       raw = fs.readFileSync(filePath, 'utf-8');
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return DEFAULT_CONFIG;
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT')
+        return DEFAULT_CONFIG;
       logger.warn(
         { err, path: filePath },
         'sender-allowlist: cannot read config',

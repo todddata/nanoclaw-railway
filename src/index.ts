@@ -273,8 +273,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Require a trigger for non-main groups and optionally for the main group.
   const needsTrigger =
-    group.requiresTrigger !== false ||
-    (isMainGroup && REQUIRE_TRIGGER_IN_MAIN);
+    group.requiresTrigger !== false || (isMainGroup && REQUIRE_TRIGGER_IN_MAIN);
   if (needsTrigger) {
     const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
@@ -838,7 +837,7 @@ async function main(): Promise<void> {
         '',
         '════════════════════════════════════════════════════════════',
         '  NanoClaw is running but no channels are configured.',
-        '  Add at least one channel\'s env vars and restart:',
+        "  Add at least one channel's env vars and restart:",
         '',
         '  Slack:     SLACK_BOT_TOKEN + SLACK_APP_TOKEN',
         '  Telegram:  TELEGRAM_BOT_TOKEN',

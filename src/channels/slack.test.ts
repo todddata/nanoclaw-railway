@@ -813,7 +813,9 @@ describe('SlackChannel', () => {
 
       await channel.setTyping('slack:C0123456789', true);
 
-      expect(appRef.current.client.assistant.threads.setStatus).toHaveBeenCalledWith({
+      expect(
+        appRef.current.client.assistant.threads.setStatus,
+      ).toHaveBeenCalledWith({
         channel_id: 'C0123456789',
         thread_ts: '1704067200.123456',
         status: 'is working on your response…',
@@ -840,7 +842,9 @@ describe('SlackChannel', () => {
 
       await channel.setTyping('slack:C0123456789', false);
 
-      expect(appRef.current.client.assistant.threads.setStatus).toHaveBeenCalledWith({
+      expect(
+        appRef.current.client.assistant.threads.setStatus,
+      ).toHaveBeenCalledWith({
         channel_id: 'C0123456789',
         thread_ts: '1704067200.123456',
         status: '',
