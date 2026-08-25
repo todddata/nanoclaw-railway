@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.DS_Store
+**/node_modules
+**/dist
+coverage
+data
+store
+logs
+security-backups
+.nanoclaw
+.tmp-*
+npm-debug.log*
