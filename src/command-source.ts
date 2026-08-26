@@ -2,6 +2,7 @@ import { NewMessage } from './types.js';
 
 export interface CommandSourcePolicy {
   allowedChannel: string;
+  allowedChatJid?: string;
 }
 
 export function validateCommandSource(
@@ -29,6 +30,13 @@ export function validateCommandSource(
     return {
       allowed: false,
       reason: 'Message destination does not match the receiving conversation.',
+    };
+  }
+
+  if (policy.allowedChatJid && chatJid !== policy.allowedChatJid) {
+    return {
+      allowed: false,
+      reason: 'Conversation is outside the configured command plane.',
     };
   }
 

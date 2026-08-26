@@ -1,7 +1,7 @@
 import { verifyCapability } from './capability.js';
 import { MockMailboxAdapter } from './mock-adapter.js';
 import { authorizeAction, parseActionRequest } from './policy.js';
-import { BrokerActionResult } from './types.js';
+import { BrokerActionRequest, BrokerActionResult } from './types.js';
 
 export interface BrokerConfig {
   secret: string;
@@ -12,6 +12,9 @@ export interface BrokerConfig {
   adapter?: MockMailboxAdapter;
   now?: () => Date;
   audit?: (event: Record<string, unknown>) => void;
+  policyVersion?: string;
+  modelVersion?: string;
+  denialAlertThreshold?: number;
 }
 
 export class BrokerError extends Error {
@@ -40,6 +43,8 @@ export class BrokerEngine {
   private readonly actionCounts = new Map<string, number>();
   private readonly idempotencyResults = new Map<string, BrokerActionResult>();
   private readonly revokedGrantIds: Set<string>;
+  private denialWindowStartedAt = 0;
+  private denialCount = 0;
   readonly adapter: MockMailboxAdapter;
 
   constructor(private readonly config: BrokerConfig) {
@@ -49,6 +54,7 @@ export class BrokerEngine {
 
   execute(raw: unknown): BrokerActionResult {
     if (this.config.killSwitch) {
+      this.recordRejection('kill_switch_active');
       throw new BrokerError('Broker kill switch is active', 503, 'broker_disabled');
     }
     if (
@@ -59,8 +65,9 @@ export class BrokerEngine {
       throw new BrokerError('Broker is not configured', 503, 'broker_not_configured');
     }
 
+    let action: BrokerActionRequest | undefined;
     try {
-      const action = parseActionRequest(raw);
+      action = parseActionRequest(raw);
       const capability = verifyCapability(
         action.capability,
         this.config.secret,
@@ -87,13 +94,9 @@ export class BrokerEngine {
         throw new Error('Capability action limit exceeded');
       }
 
-      const adapterResult = this.adapter.execute(action);
-      const result: BrokerActionResult = {
-        ...adapterResult,
-        grantId: capability.grantId,
-      };
-      this.actionCounts.set(capability.grantId, actionCount + requestedActions);
-      this.idempotencyResults.set(idempotencyScope, result);
+      // The authorized intent is written before the adapter is allowed to
+      // mutate provider state. A required audit sink failure therefore fails
+      // closed with no mailbox side effect.
       this.config.audit?.({
         event: 'mail_action_authorized',
         grantId: capability.grantId,
@@ -102,18 +105,78 @@ export class BrokerEngine {
         mailboxId: action.mailboxId,
         operation: action.operation,
         reasonCode: action.reasonCode,
+        messageRefs: action.messageIds || [],
+        policyVersion: this.config.policyVersion || 'mail-policy-v1',
+        modelVersion: this.config.modelVersion || 'none',
+        outcome: 'authorized',
+        affected: requestedActions,
+      });
+
+      const adapterResult = this.adapter.execute(action);
+      const result: BrokerActionResult = {
+        ...adapterResult,
+        grantId: capability.grantId,
+      };
+      this.config.audit?.({
+        event: 'mail_action_completed',
+        grantId: capability.grantId,
+        taskId: capability.source.taskId,
+        userId: capability.source.userId,
+        mailboxId: action.mailboxId,
+        operation: action.operation,
+        reasonCode: action.reasonCode,
+        messageRefs: action.messageIds || [],
+        policyVersion: this.config.policyVersion || 'mail-policy-v1',
+        modelVersion: this.config.modelVersion || 'none',
+        outcome: 'completed',
         affected: result.affected,
       });
+      this.actionCounts.set(capability.grantId, actionCount + requestedActions);
+      this.idempotencyResults.set(idempotencyScope, result);
       return result;
     } catch (error) {
       if (error instanceof BrokerError) throw error;
-      this.config.audit?.({
-        event: 'mail_action_rejected',
-        error: error instanceof Error ? error.message : 'unknown_error',
-      });
+      this.recordRejection(
+        error instanceof Error ? error.message : 'unknown_error',
+        action,
+      );
       throw new BrokerError(
         error instanceof Error ? error.message : 'Request rejected',
       );
+    }
+  }
+
+  private recordRejection(reason: string, action?: BrokerActionRequest): void {
+    this.config.audit?.({
+      event: 'mail_action_rejected',
+      outcome: 'rejected',
+      error: reason,
+      mailboxId: action?.mailboxId,
+      messageRefs: action?.messageIds || [],
+      operation: action?.operation,
+      reasonCode: action?.reasonCode || 'request_rejected',
+      policyVersion: this.config.policyVersion || 'mail-policy-v1',
+      modelVersion: this.config.modelVersion || 'none',
+    });
+
+    const timestamp = (this.config.now?.() || new Date()).getTime();
+    if (!this.denialWindowStartedAt || timestamp - this.denialWindowStartedAt > 60_000) {
+      this.denialWindowStartedAt = timestamp;
+      this.denialCount = 0;
+    }
+    this.denialCount += 1;
+    const threshold = Math.max(2, this.config.denialAlertThreshold || 5);
+    if (this.denialCount >= threshold) {
+      this.config.audit?.({
+        event: 'mail_security_alert',
+        outcome: 'alert',
+        reasonCode: 'repeated_denials',
+        policyVersion: this.config.policyVersion || 'mail-policy-v1',
+        modelVersion: this.config.modelVersion || 'none',
+        affected: this.denialCount,
+      });
+      this.denialCount = 0;
+      this.denialWindowStartedAt = timestamp;
     }
   }
 }

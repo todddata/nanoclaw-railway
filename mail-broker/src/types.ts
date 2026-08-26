@@ -68,7 +68,19 @@ export interface UntrustedEmailInput {
   subject?: string;
   text?: string;
   html?: string;
+  quotedText?: string;
+  headers?: Record<string, string>;
   attachmentNames?: string[];
+  attachmentContentTypes?: string[];
+  calendarPayload?: string;
+  embeddedMessageCount?: number;
+  ingestion?: {
+    rawBytes: number;
+    mimeParts: number;
+    maxDepth: number;
+    expandedBytes: number;
+    encodingErrors: number;
+  };
   providerSpam?: boolean;
 }
 
@@ -83,5 +95,9 @@ export interface InertEmailRecord {
   text: string;
   attachmentNames: string[];
   attachmentsQuarantined: boolean;
+  quarantinedContent: Array<
+    'attachments' | 'calendar' | 'embedded_messages' | 'encrypted_archive'
+  >;
+  limitsApplied: true;
   providerSpam: boolean;
 }

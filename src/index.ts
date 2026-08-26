@@ -805,6 +805,9 @@ async function main(): Promise<void> {
     onMessage: (chatJid: string, msg: NewMessage) => {
       const sourceDecision = validateCommandSource(chatJid, msg, {
         allowedChannel: COMMAND_CHANNEL,
+        allowedChatJid: SLACK_MAIN_CHANNEL_ID
+          ? `slack:${SLACK_MAIN_CHANNEL_ID}`
+          : undefined,
       });
       if (!sourceDecision.allowed) {
         logger.warn(
@@ -821,7 +824,7 @@ async function main(): Promise<void> {
 
       // Enforce drop-mode authorization before command handling or storage.
       // Only this NanoClaw instance's own messages bypass the sender check.
-      if (!msg.is_from_me && registeredGroups[chatJid]) {
+      if (!msg.is_from_me) {
         const cfg = loadSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&

@@ -14,6 +14,8 @@ const base: SpamDecisionInput = {
     text: '',
     attachmentNames: [],
     attachmentsQuarantined: false,
+    quarantinedContent: [],
+    limitsApplied: true,
     providerSpam: false,
   },
   classification: 'uncertain',
