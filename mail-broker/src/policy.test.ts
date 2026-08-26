@@ -25,6 +25,7 @@ const capability: CapabilityPayload = {
     taskId: 'task-1',
   },
   mailboxIds: ['mailbox@example.com'],
+  providers: ['gmail'],
   messageIds: ['message-1'],
   operations: ['messages.trash'],
   issuedAt: new Date(Date.now() - 1_000).toISOString(),
@@ -58,6 +59,10 @@ test('rejects mailbox and operation scope escalation', () => {
     /outside capability scope/,
   );
   assert.throws(
+    () => authorizeAction({ ...request, provider: 'microsoft' }, capability),
+    /outside capability scope/,
+  );
+  assert.throws(
     () =>
       authorizeAction(
         { ...request, operation: 'messages.untrash' },
@@ -67,10 +72,7 @@ test('rejects mailbox and operation scope escalation', () => {
   );
   assert.throws(
     () =>
-      authorizeAction(
-        { ...request, messageIds: ['message-2'] },
-        capability,
-      ),
+      authorizeAction({ ...request, messageIds: ['message-2'] }, capability),
     /outside capability scope/,
   );
 });

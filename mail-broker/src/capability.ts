@@ -53,10 +53,16 @@ export function verifyCapability(
     !payload.source.taskId ||
     !payload.grantId ||
     !Array.isArray(payload.mailboxIds) ||
+    !Array.isArray(payload.providers) ||
+    payload.providers.length < 1 ||
+    payload.providers.some(
+      (provider) => provider !== 'gmail' && provider !== 'microsoft',
+    ) ||
     !Array.isArray(payload.messageIds) ||
     payload.messageIds.length > 100 ||
     payload.messageIds.some(
-      (messageId) => typeof messageId !== 'string' || !messageId || messageId.length > 512,
+      (messageId) =>
+        typeof messageId !== 'string' || !messageId || messageId.length > 512,
     ) ||
     !Array.isArray(payload.operations) ||
     payload.operations.some(

@@ -2,6 +2,7 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 
 import { AppendOnlyAuditLog, MailAuditInput } from './audit-log.js';
 import { brokerHealth, BrokerEngine, BrokerError } from './broker.js';
+import { exchangeMailGrant } from './grant-exchange.js';
 
 const MAX_BODY_BYTES = 128 * 1024;
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -16,6 +17,14 @@ const revokedGrantIds = (process.env.MAIL_BROKER_REVOKED_GRANT_IDS || '')
   .filter(Boolean);
 const auditPath = process.env.MAIL_BROKER_AUDIT_PATH || '';
 const auditLog = auditPath ? new AppendOnlyAuditLog(auditPath) : undefined;
+const taskProvenanceSecret =
+  process.env.MAIL_BROKER_TASK_PROVENANCE_SECRET || '';
+const allowedMailboxIds = new Set(
+  (process.env.MAIL_BROKER_MAILBOX_IDS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
@@ -44,6 +53,7 @@ function audit(event: Record<string, unknown>): void {
     (event.event === 'mail_action_authorized' ||
       event.event === 'mail_action_completed' ||
       event.event === 'mail_action_rejected' ||
+      event.event === 'mail_grant_issued' ||
       event.event === 'mail_security_alert')
   ) {
     auditLog.append(event as unknown as MailAuditInput);
@@ -74,7 +84,45 @@ const server = createServer(async (request, response) => {
     return json(response, health.status, {
       ...health.body,
       auditPersistent: !!auditLog,
+      grantExchangeConfigured:
+        !!auditLog &&
+        taskProvenanceSecret.length >= 32 &&
+        allowedMailboxIds.size > 0,
     });
+  }
+
+  if (request.method === 'POST' && request.url === '/v1/grants/exchange') {
+    if (mode !== 'mock' || killSwitch || !auditLog) {
+      return json(response, 503, { error: 'grant_exchange_disabled' });
+    }
+    try {
+      return json(
+        response,
+        201,
+        exchangeMailGrant(await readJson(request), {
+          taskProvenanceSecret,
+          capabilitySecret: secret,
+          allowedSlackUser,
+          allowedSlackChannel,
+          allowedMailboxIds,
+          isRequestUsed: (requestId) =>
+            auditLog?.hasRequestId(requestId) || false,
+          audit,
+        }),
+      );
+    } catch (error) {
+      try {
+        audit({
+          event: 'mail_action_rejected',
+          outcome: 'rejected',
+          reasonCode: 'grant_exchange_rejected',
+          error: error instanceof Error ? error.message : 'unknown_error',
+        });
+      } catch {
+        return json(response, 503, { error: 'audit_unavailable' });
+      }
+      return json(response, 403, { error: 'grant_exchange_rejected' });
+    }
   }
 
   if (request.method !== 'POST' || request.url !== '/v1/actions') {

@@ -84,6 +84,9 @@ export function authorizeAction(
   if (!capability.mailboxIds.includes(request.mailboxId)) {
     throw new Error('Mailbox is outside capability scope');
   }
+  if (!capability.providers.includes(request.provider)) {
+    throw new Error('Provider is outside capability scope');
+  }
   if (!capability.operations.includes(request.operation)) {
     throw new Error('Operation is outside capability scope');
   }

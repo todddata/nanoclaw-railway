@@ -55,14 +55,22 @@ export class BrokerEngine {
   execute(raw: unknown): BrokerActionResult {
     if (this.config.killSwitch) {
       this.recordRejection('kill_switch_active');
-      throw new BrokerError('Broker kill switch is active', 503, 'broker_disabled');
+      throw new BrokerError(
+        'Broker kill switch is active',
+        503,
+        'broker_disabled',
+      );
     }
     if (
       !this.config.secret ||
       !this.config.allowedSlackUser ||
       !this.config.allowedSlackChannel
     ) {
-      throw new BrokerError('Broker is not configured', 503, 'broker_not_configured');
+      throw new BrokerError(
+        'Broker is not configured',
+        503,
+        'broker_not_configured',
+      );
     }
 
     let action: BrokerActionRequest | undefined;
@@ -168,7 +176,10 @@ export class BrokerEngine {
     });
 
     const timestamp = (this.config.now?.() || new Date()).getTime();
-    if (!this.denialWindowStartedAt || timestamp - this.denialWindowStartedAt > 60_000) {
+    if (
+      !this.denialWindowStartedAt ||
+      timestamp - this.denialWindowStartedAt > 60_000
+    ) {
       this.denialWindowStartedAt = timestamp;
       this.denialCount = 0;
     }
