@@ -77,6 +77,18 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS mail_review_items (
+      reference TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      mailbox_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      sender TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      disposition TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mail_review_expiry ON mail_review_items(expires_at);
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -622,6 +634,67 @@ export function logTaskRun(log: TaskRunLog): void {
     log.result,
     log.error,
   );
+}
+
+export interface MailReviewItemRow {
+  reference: string;
+  provider: 'gmail' | 'microsoft';
+  mailbox_id: string;
+  message_id: string;
+  sender: string;
+  subject: string;
+  disposition: 'review' | 'recoverable_trash' | 'restored';
+  created_at: string;
+  expires_at: string;
+}
+
+export function storeMailReviewItems(items: MailReviewItemRow[]): void {
+  const insert = db.prepare(`
+    INSERT INTO mail_review_items
+      (reference, provider, mailbox_id, message_id, sender, subject, disposition, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(reference) DO UPDATE SET
+      sender = excluded.sender,
+      subject = excluded.subject,
+      disposition = excluded.disposition,
+      expires_at = excluded.expires_at
+  `);
+  const transaction = db.transaction((rows: MailReviewItemRow[]) => {
+    for (const item of rows) {
+      insert.run(
+        item.reference,
+        item.provider,
+        item.mailbox_id,
+        item.message_id,
+        item.sender,
+        item.subject,
+        item.disposition,
+        item.created_at,
+        item.expires_at,
+      );
+    }
+  });
+  transaction(items);
+}
+
+export function getMailReviewItem(
+  reference: string,
+): MailReviewItemRow | undefined {
+  db.prepare('DELETE FROM mail_review_items WHERE expires_at <= ?').run(
+    new Date().toISOString(),
+  );
+  return db
+    .prepare('SELECT * FROM mail_review_items WHERE reference = ?')
+    .get(reference) as MailReviewItemRow | undefined;
+}
+
+export function updateMailReviewDisposition(
+  reference: string,
+  disposition: MailReviewItemRow['disposition'],
+): void {
+  db.prepare(
+    'UPDATE mail_review_items SET disposition = ? WHERE reference = ?',
+  ).run(disposition, reference);
 }
 
 // --- Router state accessors ---

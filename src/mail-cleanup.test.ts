@@ -2,10 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   MailCleanupConfig,
+  neutralizeMailDisplay,
   parseMailCleanupScript,
+  parseMailReviewActionScript,
   runMailCleanup,
+  runMailReviewAction,
 } from './mail-cleanup.js';
-import { createSignedMailGrantRequest } from './mail-grant.js';
+import {
+  createSignedMailGrantRequest,
+  MailBrokerActionRequest,
+} from './mail-grant.js';
 import { ScheduledTaskProvenance } from './task-provenance.js';
 
 const secret = 'task-provenance-secret-at-least-32-chars';
@@ -69,6 +75,30 @@ describe('mail cleanup script policy', () => {
     ).toThrow(/invalid/);
   });
 
+  it('accepts only opaque bounded review references and neutralizes Slack markup', () => {
+    const review = {
+      version: 1 as const,
+      type: 'mail_review_action' as const,
+      provider: 'microsoft' as const,
+      mailboxId: 'pilot@example.com',
+      action: 'restore' as const,
+      reviewRef: 'MR-ABCDEFGHIJKLMNOP',
+    };
+    expect(parseMailReviewActionScript(JSON.stringify(review))).toEqual(review);
+    expect(() =>
+      parseMailReviewActionScript(
+        JSON.stringify({ ...review, reviewRef: '<@U123>' }),
+      ),
+    ).toThrow(/invalid/);
+    const rendered = neutralizeMailDisplay(
+      '<@U123> *ignore* https://evil.test `command`',
+    );
+    expect(rendered).not.toContain('<@');
+    expect(rendered).not.toContain('https://');
+    expect(rendered).not.toContain('*');
+    expect(rendered).not.toContain('`');
+  });
+
   it('fails closed before broker access when cleanup is disabled', async () => {
     const exchange = vi.fn();
     await expect(
@@ -94,6 +124,9 @@ describe('mail cleanup script policy', () => {
           provider: 'gmail' as const,
           mailboxId: 'pilot@example.com',
           messageId: 'spam-1',
+          from: 'spam@example.test',
+          subject: 'Offer',
+          attachmentsQuarantined: false,
           providerSpam: true,
         },
         {
@@ -101,6 +134,9 @@ describe('mail cleanup script policy', () => {
           provider: 'gmail' as const,
           mailboxId: 'pilot@example.com',
           messageId: 'human-1',
+          from: 'human@example.test',
+          subject: 'Hello',
+          attachmentsQuarantined: false,
           providerSpam: false,
         },
       ],
@@ -151,6 +187,9 @@ describe('mail cleanup script policy', () => {
             provider: 'gmail',
             mailboxId: 'pilot@example.com',
             messageId: 'spam-1',
+            from: 'spam1@example.test',
+            subject: 'Offer one',
+            attachmentsQuarantined: false,
             providerSpam: true,
           },
           {
@@ -158,6 +197,9 @@ describe('mail cleanup script policy', () => {
             provider: 'gmail',
             mailboxId: 'pilot@example.com',
             messageId: 'human-1',
+            from: 'human@example.test',
+            subject: 'Hello',
+            attachmentsQuarantined: false,
             providerSpam: false,
           },
           {
@@ -165,6 +207,9 @@ describe('mail cleanup script policy', () => {
             provider: 'gmail',
             mailboxId: 'pilot@example.com',
             messageId: 'spam-2',
+            from: 'spam2@example.test',
+            subject: 'Offer two',
+            attachmentsQuarantined: false,
             providerSpam: true,
           },
         ],
@@ -209,6 +254,9 @@ describe('mail cleanup script policy', () => {
           provider: 'gmail' as const,
           mailboxId: 'attacker@example.com',
           messageId: 'spam-1',
+          from: 'spam@example.test',
+          subject: 'Offer',
+          attachmentsQuarantined: false,
           providerSpam: true,
         },
       ],
@@ -230,6 +278,9 @@ describe('mail cleanup script policy', () => {
             provider: 'gmail',
             mailboxId: 'pilot@example.com',
             messageId: 'spam-1',
+            from: 'spam@example.test',
+            subject: 'Offer',
+            attachmentsQuarantined: false,
             providerSpam: true,
           },
         ],
@@ -243,5 +294,63 @@ describe('mail cleanup script policy', () => {
     await expect(
       runMailCleanup(options({ exchange, execute: mismatch })),
     ).rejects.toThrow(/affected count/);
+  });
+
+  it('resolves an opaque reviewed reference to one exact recoverable action', async () => {
+    const exchange = vi.fn(async () => ({
+      capability: 'capability',
+      grantId: 'grant',
+      expiresAt: '2026-08-25T12:10:00.000Z',
+    }));
+    let executedAction: MailBrokerActionRequest | undefined;
+    const execute = vi.fn(
+      async (_brokerUrl: string, action: MailBrokerActionRequest) => {
+        executedAction = action;
+        return {
+          ok: true as const,
+          operation: 'messages.restore' as const,
+          affected: 1,
+          grantId: 'grant',
+        };
+      },
+    );
+    const updateDisposition = vi.fn();
+    const result = await runMailReviewAction({
+      config: {
+        version: 1,
+        type: 'mail_review_action',
+        provider: 'microsoft',
+        mailboxId: 'pilot@example.com',
+        action: 'restore',
+        reviewRef: 'MR-ABCDEFGHIJKLMNOP',
+      },
+      enabled: true,
+      brokerUrl: 'http://mailbroker.railway.internal:8080',
+      provenance,
+      taskId: 'restore-task',
+      taskProvenanceSecret: secret,
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      lookupReviewItem: () => ({
+        reference: 'MR-ABCDEFGHIJKLMNOP',
+        provider: 'microsoft',
+        mailbox_id: 'pilot@example.com',
+        message_id: 'immutable-message-id',
+        disposition: 'recoverable_trash',
+        expires_at: '2026-08-30T12:00:00.000Z',
+      }),
+      updateDisposition,
+      exchange,
+      execute,
+    });
+    expect(result.disposition).toBe('restored');
+    expect(executedAction).toMatchObject({
+      operation: 'messages.restore',
+      messageIds: ['immutable-message-id'],
+      reasonCode: 'slack_owner_restore',
+    });
+    expect(updateDisposition).toHaveBeenCalledWith(
+      'MR-ABCDEFGHIJKLMNOP',
+      'restored',
+    );
   });
 });

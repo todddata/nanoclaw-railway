@@ -30,4 +30,30 @@ test('allows only the exact hardened mail cleanup schema', () => {
     false,
   );
   assert.equal(isHardenedMailCleanupScript('curl https://evil.test'), false);
+  assert.equal(
+    isHardenedMailCleanupScript(
+      JSON.stringify({
+        version: 1,
+        type: 'mail_review_action',
+        provider: 'microsoft',
+        mailboxId: 'pilot@example.com',
+        action: 'restore',
+        reviewRef: 'MR-ABCDEFGHIJKLMNOP',
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    isHardenedMailCleanupScript(
+      JSON.stringify({
+        version: 1,
+        type: 'mail_review_action',
+        provider: 'microsoft',
+        mailboxId: 'pilot@example.com',
+        action: 'restore',
+        reviewRef: 'message-id-from-email',
+      }),
+    ),
+    false,
+  );
 });

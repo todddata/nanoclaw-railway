@@ -28,6 +28,9 @@ export interface InertMailRecord {
   provider: 'gmail' | 'microsoft';
   mailboxId: string;
   messageId: string;
+  from: string;
+  subject: string;
+  attachmentsQuarantined: boolean;
   providerSpam: boolean;
 }
 

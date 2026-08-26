@@ -5,6 +5,7 @@ import {
   createTask,
   getAllTasks,
   getRegisteredGroup,
+  getRouterState,
   getTaskById,
   setRegisteredGroup,
 } from './db.js';
@@ -73,6 +74,32 @@ beforeEach(() => {
     writeGroupsSnapshot: () => {},
     onTasksChanged: () => {},
   };
+});
+
+describe('mail kill switch authorization', () => {
+  it('persists only with an active Slack command grant and confirms in Slack', async () => {
+    const sent: Array<{ jid: string; text: string }> = [];
+    deps.sendMessage = async (jid, text) => {
+      sent.push({ jid, text });
+    };
+    await processTaskIpc(
+      { type: 'set_mail_kill_switch', enabled: true },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getRouterState('mail_kill_switch')).toBe('true');
+    expect(sent[0]).toMatchObject({ jid: 'slack:C_TEST' });
+
+    deps.getCommandGrant = () => undefined;
+    await processTaskIpc(
+      { type: 'set_mail_kill_switch', enabled: false },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getRouterState('mail_kill_switch')).toBe('true');
+  });
 });
 
 // --- schedule_task authorization ---

@@ -372,7 +372,11 @@ export class MicrosoftAdapter extends FixedProviderAdapter {
   }
 
   private headers(): Record<string, string> {
-    return { Prefer: 'outlook.body-content-type="text"' };
+    // Immutable IDs remain stable when a message is moved between folders,
+    // which makes a later Todd-authorized restore reliable.
+    return {
+      Prefer: 'outlook.body-content-type="text", IdType="ImmutableId"',
+    };
   }
 
   private async getMessage(messageId: string, token: string) {
@@ -429,13 +433,17 @@ export class MicrosoftAdapter extends FixedProviderAdapter {
         const current = await this.json(
           `${MicrosoftAdapter.base}/messages/${id}?$select=categories`,
           token,
+          { headers: this.headers() },
         );
         const categories = new Set(strings(current.categories));
         for (const label of action.addLabels || []) categories.add(label);
         for (const label of action.removeLabels || []) categories.delete(label);
         await this.json(`${MicrosoftAdapter.base}/messages/${id}`, token, {
           method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            ...this.headers(),
+            'content-type': 'application/json',
+          },
           body: JSON.stringify({ categories: [...categories] }),
         });
       } else if (
@@ -444,7 +452,10 @@ export class MicrosoftAdapter extends FixedProviderAdapter {
       ) {
         await this.json(`${MicrosoftAdapter.base}/messages/${id}/move`, token, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            ...this.headers(),
+            'content-type': 'application/json',
+          },
           body: JSON.stringify({
             destinationId:
               action.operation === 'messages.move_deleted'

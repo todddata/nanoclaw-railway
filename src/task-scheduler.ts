@@ -18,10 +18,14 @@ import {
 import {
   getAllTasks,
   getDueTasks,
+  getMailReviewItem,
+  getRouterState,
   getTaskById,
   logTaskRun,
+  storeMailReviewItems,
   updateTask,
   updateTaskAfterRun,
+  updateMailReviewDisposition,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -29,8 +33,12 @@ import { logger } from './logger.js';
 import {
   MailCleanupRunOptions,
   MailCleanupResult,
+  MailReviewActionRunOptions,
+  MailReviewActionResult,
   parseMailCleanupScript,
+  parseMailReviewActionScript,
   runMailCleanup,
+  runMailReviewAction,
 } from './mail-cleanup.js';
 import {
   ScheduledTaskProvenance,
@@ -96,6 +104,9 @@ export interface SchedulerDependencies {
   runMailCleanup?: (
     options: MailCleanupRunOptions,
   ) => Promise<MailCleanupResult>;
+  runMailReviewAction?: (
+    options: MailReviewActionRunOptions,
+  ) => Promise<MailReviewActionResult>;
 }
 
 async function runTask(
@@ -126,8 +137,10 @@ async function runTask(
     return;
   }
   let mailCleanupConfig;
+  let mailReviewActionConfig;
   try {
     mailCleanupConfig = parseMailCleanupScript(task.script);
+    mailReviewActionConfig = parseMailReviewActionScript(task.script);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     updateTask(task.id, { status: 'paused' });
@@ -198,6 +211,9 @@ async function runTask(
     let result: string | null = null;
     let error: string | null = null;
     try {
+      if (getRouterState('mail_kill_switch') === 'true') {
+        throw new Error('Mail kill switch is active');
+      }
       const cleanup = await (deps.runMailCleanup || runMailCleanup)({
         config: mailCleanupConfig,
         enabled: deps.mailCleanupEnabled ?? MAIL_CLEANUP_ENABLED,
@@ -207,6 +223,19 @@ async function runTask(
         taskProvenanceSecret,
       });
       result = cleanup.summary;
+      storeMailReviewItems(
+        cleanup.reviewItems.map((item) => ({
+          reference: item.reference,
+          provider: item.provider,
+          mailbox_id: item.mailboxId,
+          message_id: item.messageId,
+          sender: item.sender,
+          subject: item.subject,
+          disposition: item.disposition,
+          created_at: item.createdAt,
+          expires_at: item.expiresAt,
+        })),
+      );
       await deps.sendMessage(task.chat_jid, cleanup.summary);
       logger.info(
         {
@@ -233,6 +262,53 @@ async function runTask(
     updateTaskAfterRun(
       task.id,
       nextRun,
+      error ? `Error: ${error}` : result?.slice(0, 200) || 'Completed',
+    );
+    return;
+  }
+
+  if (mailReviewActionConfig) {
+    let result: string | null = null;
+    let error: string | null = null;
+    try {
+      if (getRouterState('mail_kill_switch') === 'true') {
+        throw new Error('Mail kill switch is active');
+      }
+      const action = await (deps.runMailReviewAction || runMailReviewAction)({
+        config: mailReviewActionConfig,
+        enabled: deps.mailCleanupEnabled ?? MAIL_CLEANUP_ENABLED,
+        brokerUrl: deps.mailBrokerUrl ?? MAIL_BROKER_URL,
+        provenance,
+        taskId: task.id,
+        taskProvenanceSecret,
+        lookupReviewItem: getMailReviewItem,
+        updateDisposition: updateMailReviewDisposition,
+      });
+      result = action.summary;
+      await deps.sendMessage(task.chat_jid, action.summary);
+      logger.info(
+        {
+          taskId: task.id,
+          reference: action.reference,
+          disposition: action.disposition,
+        },
+        'Host-controlled mail review action completed',
+      );
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      logger.error({ taskId: task.id, error }, 'Mail review action failed');
+    }
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: error ? 'error' : 'success',
+      result,
+      error,
+    });
+    updateTaskAfterRun(
+      task.id,
+      null,
       error ? `Error: ${error}` : result?.slice(0, 200) || 'Completed',
     );
     return;

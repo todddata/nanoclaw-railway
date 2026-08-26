@@ -548,6 +548,11 @@ async function runQuery(
               ? [
                   'mcp__nanoclaw__run_mail_report',
                   'mcp__nanoclaw__schedule_mail_report',
+                  'mcp__nanoclaw__run_mail_cleanup',
+                  'mcp__nanoclaw__schedule_mail_cleanup',
+                  'mcp__nanoclaw__trash_mail_item',
+                  'mcp__nanoclaw__restore_mail_item',
+                  'mcp__nanoclaw__set_mail_kill_switch',
                   'mcp__nanoclaw__schedule_task',
                   'mcp__nanoclaw__pause_task',
                   'mcp__nanoclaw__resume_task',

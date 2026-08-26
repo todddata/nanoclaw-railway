@@ -220,14 +220,20 @@ test('provider identity mismatch fails before any message access', async () => {
   ]);
 });
 
-test('Microsoft delete and restore are fixed recoverable move operations', async () => {
-  const calls: Array<{ url: string; method: string; body?: string }> = [];
+test('Microsoft delete and restore use immutable IDs and fixed recoverable move operations', async () => {
+  const calls: Array<{
+    url: string;
+    method: string;
+    body?: string;
+    prefer?: string;
+  }> = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({
       url,
       method: init?.method || 'GET',
       body: typeof init?.body === 'string' ? init.body : undefined,
+      prefer: new Headers(init?.headers).get('Prefer') || undefined,
     });
     if (url.includes('?$select=mail,userPrincipalName')) {
       return Response.json({ mail: 'pilot@example.com' });
@@ -255,6 +261,8 @@ test('Microsoft delete and restore are fixed recoverable move operations', async
   assert.deepEqual(JSON.parse(calls[2]?.body || '{}'), {
     destinationId: 'inbox',
   });
+  assert.match(calls[1]?.prefer || '', /IdType="ImmutableId"/);
+  assert.match(calls[2]?.prefer || '', /IdType="ImmutableId"/);
   assert.equal(
     calls.some(({ url }) => /send|reply|forward|\/delete/i.test(url)),
     false,

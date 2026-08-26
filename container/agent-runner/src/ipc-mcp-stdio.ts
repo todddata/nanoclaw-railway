@@ -12,7 +12,10 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 import { isHardenedMailCleanupScript } from './mail-cleanup-script.js';
 import {
+  buildMailCleanupTask,
   buildMailReportTask,
+  buildMailReviewActionTask,
+  findExistingMailCleanupTask,
   findExistingMailReportTask,
   mailPilotConfig,
 } from './mail-pilot.js';
@@ -60,12 +63,122 @@ server.tool(
       {
         type: 'text' as const,
         text: pilotConfig
-          ? `Hardened ${pilotConfig.provider} MailBroker is configured for ${pilotConfig.mailboxId}. Available: immediate and scheduled report-only provider-spam scans. The agent has no mailbox credentials and cannot read arbitrary inbox content, send, reply, forward, move, or delete messages.`
+          ? `Hardened ${pilotConfig.provider} MailBroker is configured for ${pilotConfig.mailboxId}. Available: safe review reports, provider-spam cleanup to recoverable trash, and Slack-reference restoration. The agent has no mailbox credentials and cannot read message bodies, send, reply, forward, create rules, or permanently delete messages.`
           : 'No hardened mailbox pilot is configured. Do not request credentials or add a general-purpose email MCP connection.',
       },
     ],
   }),
 );
+
+server.tool(
+  'set_mail_kill_switch',
+  'Emergency stop or resume all NanoClaw mailbox reports and actions. Only the authorized Slack owner can make this host-persisted change.',
+  {
+    enabled: z
+      .boolean()
+      .describe('true blocks every mailbox operation; false resumes them.'),
+  },
+  async (args) => {
+    writeIpcFile(TASKS_DIR, {
+      type: 'set_mail_kill_switch',
+      enabled: args.enabled,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: args.enabled
+            ? 'Requested emergency mailbox stop. The host will confirm after verifying your Slack command provenance.'
+            : 'Requested mailbox resume. The host will confirm after verifying your Slack command provenance.',
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'run_mail_cleanup',
+  'Queue an immediate hardened cleanup that moves only provider-flagged spam to recoverable trash and posts a safe review digest. Nothing is permanently deleted.',
+  {},
+  async () => {
+    if (!pilotConfig) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'The hardened mailbox pilot is not configured.',
+          },
+        ],
+        isError: true,
+      };
+    }
+    const task = buildMailCleanupTask({
+      config: pilotConfig,
+      chatJid,
+      groupFolder,
+    });
+    writeIpcFile(TASKS_DIR, task);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Queued hardened provider-spam cleanup ${task.taskId} for ${pilotConfig.mailboxId}. Only provider-flagged spam can move to recoverable trash; nothing can be permanently deleted.`,
+        },
+      ],
+    };
+  },
+);
+
+for (const action of ['recoverable_trash', 'restore'] as const) {
+  const toolName =
+    action === 'restore' ? 'restore_mail_item' : 'trash_mail_item';
+  server.tool(
+    toolName,
+    action === 'restore'
+      ? 'Restore one previously reviewed MR- reference from recoverable trash to the inbox. The reference must come from a host-posted Slack digest.'
+      : 'Move one previously reviewed MR- reference to recoverable trash. Nothing is permanently deleted.',
+    {
+      reference: z
+        .string()
+        .regex(/^MR-[A-Z0-9_-]{16}$/)
+        .describe('Exact MR- reference from the safe Slack review digest.'),
+    },
+    async (args) => {
+      if (!pilotConfig) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'The hardened mailbox pilot is not configured.',
+            },
+          ],
+          isError: true,
+        };
+      }
+      const task = buildMailReviewActionTask({
+        config: pilotConfig,
+        chatJid,
+        groupFolder,
+        action,
+        reviewRef: args.reference,
+      });
+      writeIpcFile(TASKS_DIR, task);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              action === 'restore'
+                ? `Queued restoration of ${args.reference}. The host will verify its signed Slack provenance and current recoverable-trash state.`
+                : `Queued recoverable trash action for ${args.reference}. The host will verify its signed Slack provenance and review state; nothing will be permanently deleted.`,
+          },
+        ],
+      };
+    },
+  );
+}
 
 server.tool(
   'run_mail_report',
@@ -174,6 +287,79 @@ server.tool(
 );
 
 server.tool(
+  'schedule_mail_cleanup',
+  'Schedule recurring hardened cleanup of provider-flagged spam to recoverable trash. Posts a safe review digest after each run. Never permanently deletes.',
+  {
+    cron: z
+      .string()
+      .describe('Standard cron expression, for example "0 2 * * *".'),
+  },
+  async (args) => {
+    if (!pilotConfig) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'The hardened mailbox pilot is not configured.',
+          },
+        ],
+        isError: true,
+      };
+    }
+    try {
+      CronExpressionParser.parse(args.cron);
+    } catch {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Invalid cron expression: "${args.cron}".`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
+    if (fs.existsSync(tasksFile)) {
+      try {
+        const existing = findExistingMailCleanupTask(
+          JSON.parse(fs.readFileSync(tasksFile, 'utf-8')),
+          pilotConfig,
+          args.cron,
+        );
+        if (existing) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Recurring hardened cleanup ${existing.id} is already active for ${pilotConfig.mailboxId} (${args.cron}, deployment local time). No duplicate was created.`,
+              },
+            ],
+          };
+        }
+      } catch {
+        // The host remains authoritative and validates any new request.
+      }
+    }
+    const task = buildMailCleanupTask({
+      config: pilotConfig,
+      chatJid,
+      groupFolder,
+      cron: args.cron,
+    });
+    writeIpcFile(TASKS_DIR, task);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Requested recurring hardened cleanup ${task.taskId} for ${pilotConfig.mailboxId} (${args.cron}, deployment local time). Only provider-flagged spam can move to recoverable trash; nothing is permanently deleted.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'send_message',
   "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
   {
@@ -267,7 +453,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       .optional()
       .describe(
         restrictedRuntime
-          ? 'Restricted Railway runtime: only the exact hardened mail_spam_cleanup JSON object is accepted; arbitrary shell scripts are disabled.'
+          ? 'Restricted Railway runtime: only exact hardened mail_spam_cleanup or mail_review_action JSON is accepted; arbitrary shell scripts are disabled.'
           : 'Optional bash script to run before waking the agent. Script must output JSON on the last line of stdout: { "wakeAgent": boolean, "data"?: any }. If wakeAgent is false, the agent is not called. Test your script with bash -c "..." before scheduling.',
       ),
   },
@@ -281,7 +467,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         content: [
           {
             type: 'text' as const,
-            text: 'Only the exact hardened mail_spam_cleanup JSON task is allowed in the restricted Railway runtime; shell scripts are disabled.',
+            text: 'Only exact hardened mail_spam_cleanup or mail_review_action JSON tasks are allowed in the restricted Railway runtime; shell scripts are disabled.',
           },
         ],
         isError: true,
@@ -551,7 +737,7 @@ server.tool(
         content: [
           {
             type: 'text' as const,
-            text: 'Only the exact hardened mail_spam_cleanup JSON task is allowed in the restricted Railway runtime; shell scripts are disabled.',
+            text: 'Only exact hardened mail_spam_cleanup or mail_review_action JSON tasks are allowed in the restricted Railway runtime; shell scripts are disabled.',
           },
         ],
         isError: true,

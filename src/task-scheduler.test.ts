@@ -180,6 +180,7 @@ describe('task scheduler', () => {
           movedToRecoverableTrash: 0,
           summary:
             'Mail scan complete: 12 checked, 2 provider-flagged spam message(s), no mailbox changes.',
+          reviewItems: [],
         };
       });
       const sendMessage = vi.fn(async () => {});

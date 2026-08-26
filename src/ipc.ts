@@ -5,7 +5,13 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getTaskById,
+  setRouterState,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -198,6 +204,7 @@ export async function processTaskIpc(
     repo?: string;
     requestId?: string;
     interactionId?: string;
+    enabled?: boolean;
     // For add_mcp_server
     command?: string;
     args?: string[];
@@ -222,6 +229,26 @@ export async function processTaskIpc(
   };
 
   switch (data.type) {
+    case 'set_mail_kill_switch': {
+      if (!requireSlackGrant('set_mail_kill_switch')) break;
+      if (typeof data.enabled !== 'boolean') {
+        logger.warn({ sourceGroup }, 'Invalid mail kill switch request');
+        break;
+      }
+      setRouterState('mail_kill_switch', data.enabled ? 'true' : 'false');
+      await deps.sendMessage(
+        `slack:${activeGrant!.channelId}`,
+        data.enabled
+          ? 'Emergency mail kill switch is ON. All NanoClaw mailbox reports and actions are blocked until you turn it off from your authorized Slack account.'
+          : 'Emergency mail kill switch is OFF. Hardened mailbox reports and recoverable actions may run again.',
+      );
+      logger.warn(
+        { sourceGroup, enabled: data.enabled },
+        'Mail kill switch changed by authorized Slack command',
+      );
+      break;
+    }
+
     case 'schedule_task': {
       const scheduleGrant = requireSlackGrant('schedule_task');
       if (!scheduleGrant) break;

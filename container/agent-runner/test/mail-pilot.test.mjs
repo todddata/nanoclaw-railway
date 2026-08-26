@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildMailCleanupTask,
   buildMailReportTask,
+  buildMailReviewActionTask,
+  findExistingMailCleanupTask,
   findExistingMailReportTask,
   mailPilotConfig,
   mailPilotSystemPrompt,
@@ -92,10 +95,55 @@ test('recurring report scheduling detects an identical active task', () => {
   );
 });
 
+test('cleanup is bounded to provider spam and recurring scheduling deduplicates', () => {
+  const task = buildMailCleanupTask({
+    config,
+    chatJid: 'slack:C123',
+    groupFolder: 'main',
+    now: new Date(2026, 7, 26, 12, 30, 0),
+    cron: '0 2 * * *',
+  });
+  const script = JSON.parse(task.script);
+  assert.equal(script.action, 'recoverable_trash_provider_spam');
+  assert.equal(script.maxActions, 10);
+  assert.equal(Object.hasOwn(script, 'messageIds'), false);
+  assert.deepEqual(
+    findExistingMailCleanupTask(
+      [{ ...task, id: task.taskId, status: 'active' }],
+      config,
+      '0 2 * * *',
+    ),
+    { id: task.taskId },
+  );
+});
+
+test('review actions carry only an opaque MR reference', () => {
+  const task = buildMailReviewActionTask({
+    config,
+    chatJid: 'slack:C123',
+    groupFolder: 'main',
+    action: 'restore',
+    reviewRef: 'MR-ABCDEFGHIJKLMNOP',
+    now: new Date(2026, 7, 26, 12, 30, 0),
+  });
+  const script = JSON.parse(task.script);
+  assert.deepEqual(script, {
+    version: 1,
+    type: 'mail_review_action',
+    provider: 'microsoft',
+    mailboxId: 'pilot@example.com',
+    action: 'restore',
+    reviewRef: 'MR-ABCDEFGHIJKLMNOP',
+  });
+  assert.equal(isHardenedMailCleanupScript(task.script), true);
+});
+
 test('system prompt names the broker and forbids credential workarounds', () => {
   const prompt = mailPilotSystemPrompt(config);
   assert.match(prompt, /MailBroker connection is configured/);
   assert.match(prompt, /never request credentials/i);
   assert.match(prompt, /untrusted data/i);
   assert.match(prompt, /run_mail_report/);
+  assert.match(prompt, /restore_mail_item/);
+  assert.match(prompt, /set_mail_kill_switch/);
 });
