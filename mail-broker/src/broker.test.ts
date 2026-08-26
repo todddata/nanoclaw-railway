@@ -351,7 +351,7 @@ test('audit sink failure prevents mailbox mutation', () => {
           'audit-failure-001',
         ),
       ),
-    /audit storage unavailable/,
+    /audit storage is unavailable/,
   );
   assert.equal(adapter.snapshot()[0]?.location, 'inbox');
 });

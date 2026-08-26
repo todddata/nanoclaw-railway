@@ -53,6 +53,10 @@ export class AppendOnlyAuditLog {
       const events = this.readAndVerify();
       this.previousHash = events.at(-1)?.hash || ZERO_HASH;
     }
+    // Probe the configured journal during startup. A read-only or unavailable
+    // volume must prevent readiness instead of failing on the first action.
+    appendFileSync(this.path, '', { encoding: 'utf8', flag: 'a', mode: 0o600 });
+    chmodSync(this.path, 0o600);
   }
 
   append(input: MailAuditInput): MailAuditEvent {
