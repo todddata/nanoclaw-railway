@@ -53,6 +53,11 @@ export function verifyCapability(
     !payload.source.taskId ||
     !payload.grantId ||
     !Array.isArray(payload.mailboxIds) ||
+    !Array.isArray(payload.messageIds) ||
+    payload.messageIds.length > 100 ||
+    payload.messageIds.some(
+      (messageId) => typeof messageId !== 'string' || !messageId || messageId.length > 512,
+    ) ||
     !Array.isArray(payload.operations) ||
     payload.operations.some(
       (operation) => !ALLOWED_OPERATIONS.includes(operation),

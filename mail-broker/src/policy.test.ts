@@ -25,6 +25,7 @@ const capability: CapabilityPayload = {
     taskId: 'task-1',
   },
   mailboxIds: ['mailbox@example.com'],
+  messageIds: ['message-1'],
   operations: ['messages.trash'],
   issuedAt: new Date(Date.now() - 1_000).toISOString(),
   expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -60,6 +61,14 @@ test('rejects mailbox and operation scope escalation', () => {
     () =>
       authorizeAction(
         { ...request, operation: 'messages.untrash' },
+        capability,
+      ),
+    /outside capability scope/,
+  );
+  assert.throws(
+    () =>
+      authorizeAction(
+        { ...request, messageIds: ['message-2'] },
         capability,
       ),
     /outside capability scope/,

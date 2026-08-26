@@ -45,6 +45,7 @@ function capability(
         taskId: 'task-1',
       },
       mailboxIds: ['personal@example.com', 'work@example.com'],
+      messageIds: ['gmail-1', 'outlook-1'],
       operations,
       issuedAt: '2026-08-25T12:00:00.000Z',
       expiresAt: '2026-08-25T13:00:00.000Z',
