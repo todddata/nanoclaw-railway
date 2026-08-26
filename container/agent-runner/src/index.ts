@@ -26,6 +26,7 @@ import {
 import { fileURLToPath } from 'url';
 
 import { createWorkspacePolicyHook } from './tool-policy.js';
+import { mailPilotConfig, mailPilotSystemPrompt } from './mail-pilot.js';
 
 interface ContainerInput {
   prompt: string;
@@ -67,9 +68,12 @@ interface SDKUserMessage {
 const MCP_JSON_PATH = '/home/node/.claude/.mcp.json';
 const IPC_INPUT_DIR = process.env.NANOCLAW_IPC_INPUT || '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
-const WORKSPACE_GROUP = process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/group';
-const WORKSPACE_GLOBAL = process.env.NANOCLAW_WORKSPACE_GLOBAL || '/workspace/global';
-const WORKSPACE_EXTRA = process.env.NANOCLAW_WORKSPACE_EXTRA || '/workspace/extra';
+const WORKSPACE_GROUP =
+  process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/group';
+const WORKSPACE_GLOBAL =
+  process.env.NANOCLAW_WORKSPACE_GLOBAL || '/workspace/global';
+const WORKSPACE_EXTRA =
+  process.env.NANOCLAW_WORKSPACE_EXTRA || '/workspace/extra';
 const IPC_POLL_MS = 500;
 const RESTRICTED_RUNTIME = process.env.NANOCLAW_RESTRICTED_RUNTIME === '1';
 
@@ -218,13 +222,15 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 
 // Default secrets to strip from Bash tool subprocess environments.
 // Additional keys are passed dynamically via containerInput.secretKeyNames.
-const DEFAULT_SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+const DEFAULT_SECRET_ENV_VARS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+];
 
 function createSanitizeBashHook(extraSecretKeys: string[] = []): HookCallback {
-  const allSecretKeys = [...new Set([
-    ...DEFAULT_SECRET_ENV_VARS,
-    ...extraSecretKeys,
-  ])];
+  const allSecretKeys = [
+    ...new Set([...DEFAULT_SECRET_ENV_VARS, ...extraSecretKeys]),
+  ];
 
   return async (input, _toolUseId, _context) => {
     const preInput = input as PreToolUseHookInput;
@@ -451,25 +457,38 @@ async function runQuery(
   const restrictedRuntime = RESTRICTED_RUNTIME;
 
   // Load additional MCP servers from .mcp.json (synced from host)
-  const extraMcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> = {};
+  const extraMcpServers: Record<
+    string,
+    { command: string; args: string[]; env: Record<string, string> }
+  > = {};
   const extraMcpToolPatterns: string[] = [];
   if (!restrictedRuntime && fs.existsSync(MCP_JSON_PATH)) {
     try {
       const mcpJson = JSON.parse(fs.readFileSync(MCP_JSON_PATH, 'utf-8'));
       for (const [name, config] of Object.entries(mcpJson.mcpServers || {})) {
-        const cfg = config as { command: string; args?: string[]; env?: Record<string, string> };
+        const cfg = config as {
+          command: string;
+          args?: string[];
+          env?: Record<string, string>;
+        };
         const resolvedEnv: Record<string, string> = {};
         for (const [key, val] of Object.entries(cfg.env || {})) {
           const match = val.match(/^\$\{(.+)\}$/);
           if (match && sdkEnv[match[1]]) resolvedEnv[key] = sdkEnv[match[1]]!;
           else if (!val.startsWith('${')) resolvedEnv[key] = val;
         }
-        extraMcpServers[name] = { command: cfg.command, args: cfg.args || [], env: resolvedEnv };
+        extraMcpServers[name] = {
+          command: cfg.command,
+          args: cfg.args || [],
+          env: resolvedEnv,
+        };
         extraMcpToolPatterns.push(`mcp__${name}__*`);
         log(`MCP server from .mcp.json: ${name} (${cfg.command})`);
       }
     } catch (err) {
-      log(`Failed to read .mcp.json: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `Failed to read .mcp.json: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -478,6 +497,9 @@ async function runQuery(
   let globalClaudeMd: string | undefined;
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
+  }
+  if (restrictedRuntime) {
+    globalClaudeMd = `${globalClaudeMd || ''}${mailPilotSystemPrompt(mailPilotConfig())}`;
   }
 
   // Discover additional directories mounted at /workspace/extra/*
@@ -521,8 +543,11 @@ async function runQuery(
             'WebFetch',
             'mcp__nanoclaw__send_message',
             'mcp__nanoclaw__list_tasks',
+            'mcp__nanoclaw__mailbox_status',
             ...(!containerInput.isScheduledTask
               ? [
+                  'mcp__nanoclaw__run_mail_report',
+                  'mcp__nanoclaw__schedule_mail_report',
                   'mcp__nanoclaw__schedule_task',
                   'mcp__nanoclaw__pause_task',
                   'mcp__nanoclaw__resume_task',
@@ -573,8 +598,13 @@ async function runQuery(
             // group an IPC directory on the persistent /data volume. Pass
             // that path through to the MCP subprocess; otherwise it falls
             // back to the container-only /workspace/ipc path.
-            NANOCLAW_IPC_DIR:
-              process.env.NANOCLAW_IPC_DIR || '/workspace/ipc',
+            NANOCLAW_IPC_DIR: process.env.NANOCLAW_IPC_DIR || '/workspace/ipc',
+            NANOCLAW_MAIL_PILOT_ENABLED:
+              process.env.NANOCLAW_MAIL_PILOT_ENABLED || '0',
+            NANOCLAW_MAIL_PILOT_MAILBOX_ID:
+              process.env.NANOCLAW_MAIL_PILOT_MAILBOX_ID || '',
+            NANOCLAW_MAIL_PILOT_PROVIDER:
+              process.env.NANOCLAW_MAIL_PILOT_PROVIDER || '',
           },
         },
         ...extraMcpServers,
@@ -739,7 +769,9 @@ async function main(): Promise<void> {
 
   // Build minimal SDK environment — only system vars + explicitly forwarded secrets.
   // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
-  const secretKeys = (containerInput as unknown as Record<string, unknown>).secretKeyNames as string[] || [];
+  const secretKeys =
+    ((containerInput as unknown as Record<string, unknown>)
+      .secretKeyNames as string[]) || [];
   const sdkEnv: Record<string, string | undefined> = {
     PATH: process.env.PATH,
     HOME: process.env.HOME,

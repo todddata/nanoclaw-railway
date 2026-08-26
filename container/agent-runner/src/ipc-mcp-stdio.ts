@@ -11,6 +11,11 @@ import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 import { isHardenedMailCleanupScript } from './mail-cleanup-script.js';
+import {
+  buildMailReportTask,
+  findExistingMailReportTask,
+  mailPilotConfig,
+} from './mail-pilot.js';
 
 const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -22,6 +27,7 @@ const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
 const restrictedRuntime = process.env.NANOCLAW_RESTRICTED_RUNTIME === '1';
 const interactionId = process.env.NANOCLAW_INTERACTION_ID || undefined;
+const pilotConfig = mailPilotConfig();
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -31,7 +37,10 @@ function writeIpcFile(dir: string, data: object): string {
 
   // Atomic write: temp file then rename
   const tempPath = `${filepath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify({ ...data, interactionId }, null, 2));
+  fs.writeFileSync(
+    tempPath,
+    JSON.stringify({ ...data, interactionId }, null, 2),
+  );
   fs.renameSync(tempPath, filepath);
 
   return filename;
@@ -41,6 +50,128 @@ const server = new McpServer({
   name: 'nanoclaw',
   version: '1.0.0',
 });
+
+server.tool(
+  'mailbox_status',
+  'Report whether the hardened credential-free mailbox pilot is configured and describe its exact allowed capabilities.',
+  {},
+  async () => ({
+    content: [
+      {
+        type: 'text' as const,
+        text: pilotConfig
+          ? `Hardened ${pilotConfig.provider} MailBroker is configured for ${pilotConfig.mailboxId}. Available: immediate and scheduled report-only provider-spam scans. The agent has no mailbox credentials and cannot read arbitrary inbox content, send, reply, forward, move, or delete messages.`
+          : 'No hardened mailbox pilot is configured. Do not request credentials or add a general-purpose email MCP connection.',
+      },
+    ],
+  }),
+);
+
+server.tool(
+  'run_mail_report',
+  'Queue an immediate hardened report-only provider-spam scan for the configured pilot mailbox. Takes no mailbox credentials or message instructions. The summary is posted to the current Slack channel.',
+  {},
+  async () => {
+    if (!pilotConfig) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'The hardened mailbox pilot is not configured.',
+          },
+        ],
+        isError: true,
+      };
+    }
+    const task = buildMailReportTask({
+      config: pilotConfig,
+      chatJid,
+      groupFolder,
+    });
+    writeIpcFile(TASKS_DIR, task);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Queued hardened report-only scan ${task.taskId} for ${pilotConfig.mailboxId}. The host MailBroker will post the summary here after the next scheduler poll. No messages will be modified.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'schedule_mail_report',
+  'Schedule a recurring hardened report-only provider-spam scan for the configured pilot mailbox. The cron expression uses the deployment local timezone. No email content can configure or authorize the task.',
+  {
+    cron: z
+      .string()
+      .describe('Standard cron expression, for example "0 2 * * *".'),
+  },
+  async (args) => {
+    if (!pilotConfig) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'The hardened mailbox pilot is not configured.',
+          },
+        ],
+        isError: true,
+      };
+    }
+    try {
+      CronExpressionParser.parse(args.cron);
+    } catch {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Invalid cron expression: "${args.cron}".`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
+    if (fs.existsSync(tasksFile)) {
+      try {
+        const existing = findExistingMailReportTask(
+          JSON.parse(fs.readFileSync(tasksFile, 'utf-8')),
+          pilotConfig,
+          args.cron,
+        );
+        if (existing) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Recurring hardened report-only scan ${existing.id} is already active for ${pilotConfig.mailboxId} (${args.cron}, deployment local time). No duplicate was created.`,
+              },
+            ],
+          };
+        }
+      } catch {
+        // The host remains authoritative and validates any new request.
+      }
+    }
+    const task = buildMailReportTask({
+      config: pilotConfig,
+      chatJid,
+      groupFolder,
+      cron: args.cron,
+    });
+    writeIpcFile(TASKS_DIR, task);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Requested recurring hardened report-only scan ${task.taskId} for ${pilotConfig.mailboxId} (${args.cron}, deployment local time). No messages will be modified.`,
+        },
+      ],
+    };
+  },
+);
 
 server.tool(
   'send_message',
@@ -556,13 +687,21 @@ server.tool(
   'Manage agent skills. Actions: "add" installs skills from a GitHub repo (requires repo param), "remove" removes a skill by name, "list" shows all installed skills. A progress message is sent to the user for add. After adding, use send_message to tell the user what was installed and ask for any missing credentials — do NOT wait for your final output.',
   {
     action: z.enum(['add', 'remove', 'list']).describe('Action to perform'),
-    repo: z.string().optional().describe('GitHub repo (owner/repo or full URL) — required for "add"'),
+    repo: z
+      .string()
+      .optional()
+      .describe('GitHub repo (owner/repo or full URL) — required for "add"'),
     name: z.string().optional().describe('Skill name — required for "remove"'),
   },
   async (args) => {
     if (!isMain) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can manage skills.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only the main group can manage skills.',
+          },
+        ],
         isError: true,
       };
     }
@@ -574,7 +713,12 @@ server.tool(
     if (args.action === 'add') {
       if (!args.repo) {
         return {
-          content: [{ type: 'text' as const, text: 'The "repo" parameter is required for the "add" action.' }],
+          content: [
+            {
+              type: 'text' as const,
+              text: 'The "repo" parameter is required for the "add" action.',
+            },
+          ],
           isError: true,
         };
       }
@@ -609,7 +753,12 @@ server.tool(
 
             if (result.error) {
               return {
-                content: [{ type: 'text' as const, text: `Failed to install skills: ${result.error}` }],
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `Failed to install skills: ${result.error}`,
+                  },
+                ],
                 isError: true,
               };
             }
@@ -621,16 +770,23 @@ server.tool(
                 response += `\n- ${input.envVar}: ${input.description}${input.required ? ' (required)' : ' (optional)'}`;
               }
               if (process.env.RAILWAY_ENVIRONMENT) {
-                response += '\n\nAsk the user to add these credentials in the Railway service dashboard (Environment Variables section) and redeploy.';
+                response +=
+                  '\n\nAsk the user to add these credentials in the Railway service dashboard (Environment Variables section) and redeploy.';
               } else {
-                response += '\n\nUse the set_env_var tool to set each required credential.';
+                response +=
+                  '\n\nUse the set_env_var tool to set each required credential.';
               }
             }
 
             return { content: [{ type: 'text' as const, text: response }] };
           } catch (err) {
             return {
-              content: [{ type: 'text' as const, text: `Error reading install result: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Error reading install result: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
@@ -639,7 +795,12 @@ server.tool(
       }
 
       return {
-        content: [{ type: 'text' as const, text: 'Timed out waiting for skill installation to complete.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Timed out waiting for skill installation to complete.',
+          },
+        ],
         isError: true,
       };
     }
@@ -647,7 +808,12 @@ server.tool(
     if (args.action === 'remove') {
       if (!args.name) {
         return {
-          content: [{ type: 'text' as const, text: 'The "name" parameter is required for the "remove" action.' }],
+          content: [
+            {
+              type: 'text' as const,
+              text: 'The "name" parameter is required for the "remove" action.',
+            },
+          ],
           isError: true,
         };
       }
@@ -673,17 +839,34 @@ server.tool(
 
             if (result.error) {
               return {
-                content: [{ type: 'text' as const, text: `Failed to remove skill: ${result.error}` }],
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `Failed to remove skill: ${result.error}`,
+                  },
+                ],
                 isError: true,
               };
             }
 
             return {
-              content: [{ type: 'text' as const, text: result.removed ? `Skill "${args.name}" removed.` : `Skill "${args.name}" not found.` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: result.removed
+                    ? `Skill "${args.name}" removed.`
+                    : `Skill "${args.name}" not found.`,
+                },
+              ],
             };
           } catch (err) {
             return {
-              content: [{ type: 'text' as const, text: `Error reading remove result: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Error reading remove result: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
@@ -692,7 +875,12 @@ server.tool(
       }
 
       return {
-        content: [{ type: 'text' as const, text: 'Timed out waiting for skill removal to complete.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Timed out waiting for skill removal to complete.',
+          },
+        ],
         isError: true,
       };
     }
@@ -718,13 +906,22 @@ server.tool(
 
           if (result.error) {
             return {
-              content: [{ type: 'text' as const, text: `Failed to list skills: ${result.error}` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Failed to list skills: ${result.error}`,
+                },
+              ],
               isError: true,
             };
           }
 
           if (!result.skills || result.skills.length === 0) {
-            return { content: [{ type: 'text' as const, text: 'No skills installed.' }] };
+            return {
+              content: [
+                { type: 'text' as const, text: 'No skills installed.' },
+              ],
+            };
           }
 
           let response = `Installed skills (${result.skills.length}):`;
@@ -734,7 +931,12 @@ server.tool(
           return { content: [{ type: 'text' as const, text: response }] };
         } catch (err) {
           return {
-            content: [{ type: 'text' as const, text: `Error reading list result: ${err instanceof Error ? err.message : String(err)}` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error reading list result: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            ],
             isError: true,
           };
         }
@@ -743,7 +945,9 @@ server.tool(
     }
 
     return {
-      content: [{ type: 'text' as const, text: 'Timed out waiting for skill list.' }],
+      content: [
+        { type: 'text' as const, text: 'Timed out waiting for skill list.' },
+      ],
       isError: true,
     };
   },
@@ -754,16 +958,44 @@ server.tool(
   `Manage MCP (Model Context Protocol) servers. Actions: "add" registers a new MCP server, "remove" removes a server by name, "list" shows all registered servers. Servers persist across restarts. For "add": provide EITHER a "url" (for remote HTTP/SSE servers — automatically bridged via mcp-remote) OR "command" + "args" (for stdio servers). After adding, ${process.env.RAILWAY_ENVIRONMENT ? 'ask the user to add required credentials in the Railway service dashboard and redeploy' : 'use set_env_var to set any required credentials'}.`,
   {
     action: z.enum(['add', 'remove', 'list']).describe('Action to perform'),
-    name: z.string().optional().describe('Server name — required for "add" and "remove"'),
-    url: z.string().optional().describe('URL of a remote HTTP/SSE MCP server (e.g., "https://example.com/mcp/..."). Automatically bridged to stdio via mcp-remote. Use this instead of command/args for remote servers.'),
-    command: z.string().optional().describe('Command to run the server (e.g., "npx") — required for "add" when url is not provided'),
-    args: z.array(z.string()).optional().describe('Command arguments (e.g., ["-y", "@hubspot/mcp-server"]) — required for "add" when url is not provided'),
-    env: z.record(z.string(), z.string()).optional().describe('Environment variables (e.g., {"HUBSPOT_TOKEN": "${HUBSPOT_TOKEN}"}) — optional for "add"'),
+    name: z
+      .string()
+      .optional()
+      .describe('Server name — required for "add" and "remove"'),
+    url: z
+      .string()
+      .optional()
+      .describe(
+        'URL of a remote HTTP/SSE MCP server (e.g., "https://example.com/mcp/..."). Automatically bridged to stdio via mcp-remote. Use this instead of command/args for remote servers.',
+      ),
+    command: z
+      .string()
+      .optional()
+      .describe(
+        'Command to run the server (e.g., "npx") — required for "add" when url is not provided',
+      ),
+    args: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Command arguments (e.g., ["-y", "@hubspot/mcp-server"]) — required for "add" when url is not provided',
+      ),
+    env: z
+      .record(z.string(), z.string())
+      .optional()
+      .describe(
+        'Environment variables (e.g., {"HUBSPOT_TOKEN": "${HUBSPOT_TOKEN}"}) — optional for "add"',
+      ),
   },
   async (args) => {
     if (!isMain) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can manage MCP servers.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only the main group can manage MCP servers.',
+          },
+        ],
         isError: true,
       };
     }
@@ -781,7 +1013,12 @@ server.tool(
 
       if (!args.name || !args.command || !args.args) {
         return {
-          content: [{ type: 'text' as const, text: 'For "add": provide "name" and either "url" (for remote HTTP/SSE servers) or "command" + "args" (for stdio servers).' }],
+          content: [
+            {
+              type: 'text' as const,
+              text: 'For "add": provide "name" and either "url" (for remote HTTP/SSE servers) or "command" + "args" (for stdio servers).',
+            },
+          ],
           isError: true,
         };
       }
@@ -819,7 +1056,12 @@ server.tool(
 
             if (result.error) {
               return {
-                content: [{ type: 'text' as const, text: `Failed to add MCP server: ${result.error}` }],
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `Failed to add MCP server: ${result.error}`,
+                  },
+                ],
                 isError: true,
               };
             }
@@ -828,17 +1070,25 @@ server.tool(
             if (result.envVarsNeeded && result.envVarsNeeded.length > 0) {
               response += `\n\nRequired environment variables: ${result.envVarsNeeded.join(', ')}`;
               if (process.env.RAILWAY_ENVIRONMENT) {
-                response += '\n\nAsk the user to add these credentials in the Railway service dashboard (Environment Variables section) and redeploy.';
+                response +=
+                  '\n\nAsk the user to add these credentials in the Railway service dashboard (Environment Variables section) and redeploy.';
               } else {
-                response += '\n\nUse the set_env_var tool to set each required credential.';
+                response +=
+                  '\n\nUse the set_env_var tool to set each required credential.';
               }
             }
-            response += '\n\nNote: The server will be available on the next agent invocation.';
+            response +=
+              '\n\nNote: The server will be available on the next agent invocation.';
 
             return { content: [{ type: 'text' as const, text: response }] };
           } catch (err) {
             return {
-              content: [{ type: 'text' as const, text: `Error reading add result: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Error reading add result: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
@@ -847,7 +1097,12 @@ server.tool(
       }
 
       return {
-        content: [{ type: 'text' as const, text: 'Timed out waiting for MCP server registration.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Timed out waiting for MCP server registration.',
+          },
+        ],
         isError: true,
       };
     }
@@ -855,7 +1110,12 @@ server.tool(
     if (args.action === 'remove') {
       if (!args.name) {
         return {
-          content: [{ type: 'text' as const, text: 'The "name" parameter is required for the "remove" action.' }],
+          content: [
+            {
+              type: 'text' as const,
+              text: 'The "name" parameter is required for the "remove" action.',
+            },
+          ],
           isError: true,
         };
       }
@@ -881,17 +1141,34 @@ server.tool(
 
             if (result.error) {
               return {
-                content: [{ type: 'text' as const, text: `Failed to remove MCP server: ${result.error}` }],
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `Failed to remove MCP server: ${result.error}`,
+                  },
+                ],
                 isError: true,
               };
             }
 
             return {
-              content: [{ type: 'text' as const, text: result.removed ? `MCP server "${args.name}" removed.` : `MCP server "${args.name}" not found.` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: result.removed
+                    ? `MCP server "${args.name}" removed.`
+                    : `MCP server "${args.name}" not found.`,
+                },
+              ],
             };
           } catch (err) {
             return {
-              content: [{ type: 'text' as const, text: `Error reading remove result: ${err instanceof Error ? err.message : String(err)}` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Error reading remove result: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             };
           }
@@ -900,7 +1177,12 @@ server.tool(
       }
 
       return {
-        content: [{ type: 'text' as const, text: 'Timed out waiting for MCP server removal.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Timed out waiting for MCP server removal.',
+          },
+        ],
         isError: true,
       };
     }
@@ -926,13 +1208,22 @@ server.tool(
 
           if (result.error) {
             return {
-              content: [{ type: 'text' as const, text: `Failed to list MCP servers: ${result.error}` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Failed to list MCP servers: ${result.error}`,
+                },
+              ],
               isError: true,
             };
           }
 
           if (!result.servers || result.servers.length === 0) {
-            return { content: [{ type: 'text' as const, text: 'No MCP servers registered.' }] };
+            return {
+              content: [
+                { type: 'text' as const, text: 'No MCP servers registered.' },
+              ],
+            };
           }
 
           let response = `Registered MCP servers (${result.servers.length}):`;
@@ -945,7 +1236,12 @@ server.tool(
           return { content: [{ type: 'text' as const, text: response }] };
         } catch (err) {
           return {
-            content: [{ type: 'text' as const, text: `Error reading list result: ${err instanceof Error ? err.message : String(err)}` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error reading list result: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            ],
             isError: true,
           };
         }
@@ -954,7 +1250,12 @@ server.tool(
     }
 
     return {
-      content: [{ type: 'text' as const, text: 'Timed out waiting for MCP server list.' }],
+      content: [
+        {
+          type: 'text' as const,
+          text: 'Timed out waiting for MCP server list.',
+        },
+      ],
       isError: true,
     };
   },

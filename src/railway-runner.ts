@@ -156,6 +156,14 @@ export async function runRailwayAgent(
         NODE_ENV: process.env.NODE_ENV || '',
         RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT || '',
         NANOCLAW_RESTRICTED_RUNTIME: '1',
+        NANOCLAW_MAIL_PILOT_ENABLED:
+          process.env.MAIL_CLEANUP_ENABLED === 'true' &&
+          !!process.env.MAIL_PILOT_MAILBOX_ID &&
+          !!process.env.MAIL_PILOT_PROVIDER
+            ? '1'
+            : '0',
+        NANOCLAW_MAIL_PILOT_MAILBOX_ID: process.env.MAIL_PILOT_MAILBOX_ID || '',
+        NANOCLAW_MAIL_PILOT_PROVIDER: process.env.MAIL_PILOT_PROVIDER || '',
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:' + CREDENTIAL_PROXY_PORT,
         ANTHROPIC_API_KEY: 'proxy-injected',
       },
