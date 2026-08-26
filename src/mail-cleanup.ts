@@ -91,6 +91,7 @@ export function neutralizeMailDisplay(value: string): string {
   };
   return value
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '[link removed]')
+    .replace(/\p{Extended_Pictographic}/gu, '[emoji]')
     .replace(/[<>@#&*_~`|.:/\\]/g, (character) => replacements[character])
     .replace(/\s+/g, ' ')
     .trim()

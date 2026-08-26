@@ -91,13 +91,14 @@ describe('mail cleanup script policy', () => {
       ),
     ).toThrow(/invalid/);
     const rendered = neutralizeMailDisplay(
-      '<@U123> *ignore* https://evil.test `command` :eyes: sender@example.test',
+      '<@U123> *ignore* https://evil.test `command` :eyes: 👀 sender@example.test',
     );
     expect(rendered).not.toContain('<@');
     expect(rendered).not.toContain('https://');
     expect(rendered).not.toContain('*');
     expect(rendered).not.toContain('`');
     expect(rendered).not.toContain(':eyes:');
+    expect(rendered).not.toContain('👀');
     expect(rendered).not.toContain('example.test');
   });
 
