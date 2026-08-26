@@ -71,6 +71,7 @@ For Gmail, set `MAIL_BROKER_MODE=gmail`,
 `MAIL_BROKER_GOOGLE_CLIENT_SECRET`, and `MAIL_BROKER_GOOGLE_REFRESH_TOKEN`.
 The fixed scope is `gmail.modify`. The adapter supports list/get, label changes,
 trash, and untrash; it has no send or permanent-delete route.
+The list operation is pinned to Gmail's `SPAM` label.
 
 For Microsoft 365, set `MAIL_BROKER_MODE=microsoft`,
 `MAIL_BROKER_PROVIDER_MAILBOX_ID`, `MAIL_BROKER_MICROSOFT_TENANT_ID`,
@@ -79,10 +80,42 @@ For Microsoft 365, set `MAIL_BROKER_MODE=microsoft`,
 `Mail.ReadWrite` and `User.Read`. The adapter supports list/get, categories,
 and recoverable moves to Deleted Items or Inbox; it has no delete, send, reply,
 or forward route.
+The list operation is pinned to the well-known Junk Email folder.
 
 If any required provider variable is absent, the health and action endpoints
 fail closed with `503`. Provider activation also requires the selected mailbox
 to appear in `MAIL_BROKER_MAILBOX_IDS`.
+
+## Scheduled provider-spam cleanup
+
+NanoClaw recognizes one host-controlled scheduled-task script. It does not pass
+this task to an agent container. The task must retain its signed Slack
+provenance and use this exact JSON schema:
+
+```json
+{
+  "version": 1,
+  "type": "mail_spam_cleanup",
+  "provider": "gmail",
+  "mailboxId": "pilot@example.com",
+  "action": "report",
+  "maxMessages": 50,
+  "maxActions": 10
+}
+```
+
+The only actions are `report` and `recoverable_trash_provider_spam`. The host
+first exchanges a one-use scan grant, accepts only inert records from the exact
+provider and mailbox, then mints a second grant containing only provider-flagged
+message IDs. Gmail moves those messages to Trash; Microsoft moves them from
+Junk Email to Deleted Items. No model classification or email-supplied command
+is involved in this first-stage automation.
+
+Set `MAIL_BROKER_URL=http://MailBroker.railway.internal:8080` only on NanoClaw.
+`MAIL_CLEANUP_ENABLED` defaults false and must remain false until a pilot
+mailbox has been explicitly authorized. Provider OAuth values remain only on
+MailBroker. On Railway, reusable Gmail credentials are never mounted into agent
+containers.
 
 Optional safety controls:
 

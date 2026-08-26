@@ -1,11 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import { MailCleanupConfig } from './mail-cleanup.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
   startSchedulerLoop,
 } from './task-scheduler.js';
+import {
+  createActiveCommandGrant,
+  signScheduledTask,
+} from './task-provenance.js';
+
+const taskSecret = 'task-provenance-secret-at-least-32-chars';
 
 describe('task scheduler', () => {
   beforeEach(() => {
@@ -125,5 +132,85 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+
+  it('routes a signed mail cleanup task through the host workflow without launching an agent', async () => {
+    const now = new Date();
+    const cleanupConfig: MailCleanupConfig = {
+      version: 1,
+      type: 'mail_spam_cleanup',
+      provider: 'gmail',
+      mailboxId: 'pilot@example.com',
+      action: 'report',
+      maxMessages: 20,
+      maxActions: 5,
+    };
+    const task = {
+      id: 'task-mail-cleanup',
+      group_folder: 'main',
+      chat_jid: 'slack:C_CONTROL',
+      prompt: 'Run the hardened provider-spam report.',
+      script: JSON.stringify(cleanupConfig),
+      schedule_type: 'once' as const,
+      schedule_value: new Date(now.getTime() - 1_000).toISOString(),
+      context_mode: 'isolated' as const,
+      next_run: new Date(now.getTime() - 1_000).toISOString(),
+      status: 'active' as const,
+      created_at: now.toISOString(),
+    };
+    const grant = createActiveCommandGrant(
+      {
+        workspaceId: 'T123',
+        chatJid: 'slack:C_CONTROL',
+        userId: 'U_OWNER',
+        messageId: 'slack-message-1',
+      },
+      now,
+    );
+    createTask({
+      ...task,
+      ...signScheduledTask(task, grant, taskSecret, now),
+    });
+    const completed = new Promise<void>((resolve) => {
+      const runMailCleanup = vi.fn(async () => {
+        resolve();
+        return {
+          scanned: 12,
+          providerSpamFound: 2,
+          movedToRecoverableTrash: 0,
+          summary:
+            'Mail scan complete: 12 checked, 2 provider-flagged spam message(s), no mailbox changes.',
+        };
+      });
+      const sendMessage = vi.fn(async () => {});
+      startSchedulerLoop({
+        registeredGroups: () => ({
+          'slack:C_CONTROL': {
+            name: 'NanoClaw',
+            folder: 'main',
+            trigger: '@NanoClaw',
+            added_at: now.toISOString(),
+            isMain: true,
+          },
+        }),
+        getSessions: () => ({}),
+        queue: {
+          enqueueTask: (
+            _jid: string,
+            _taskId: string,
+            fn: () => Promise<void>,
+          ) => void fn(),
+        } as any,
+        onProcess: vi.fn(),
+        sendMessage,
+        taskProvenanceSecret: taskSecret,
+        mailCleanupEnabled: true,
+        mailBrokerUrl: 'http://mailbroker.railway.internal:8080',
+        runMailCleanup,
+      });
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    await completed;
+    expect(getTaskById('task-mail-cleanup')?.status).toBe('completed');
   });
 });

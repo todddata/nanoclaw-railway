@@ -203,7 +203,9 @@ function buildVolumeMounts(
 
   // Gmail credentials directory (for Gmail MCP inside the container)
   const gmailDir = path.join(homeDir, '.gmail-mcp');
-  if (fs.existsSync(gmailDir)) {
+  // Railway mail access belongs exclusively to the isolated MailBroker.
+  // Never mount reusable mailbox credentials into an agent container there.
+  if (!IS_RAILWAY && fs.existsSync(gmailDir)) {
     mounts.push({
       hostPath: gmailDir,
       containerPath: '/home/node/.gmail-mcp',

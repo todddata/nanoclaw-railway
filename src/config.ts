@@ -15,6 +15,8 @@ const envConfig = readEnvFile([
   'REQUIRE_TRIGGER_IN_MAIN',
   'NANOCLAW_COMMAND_CHANNEL',
   'TASK_PROVENANCE_SECRET',
+  'MAIL_BROKER_URL',
+  'MAIL_CLEANUP_ENABLED',
   'ONECLI_URL',
   'TZ',
 ]);
@@ -36,6 +38,11 @@ export const COMMAND_CHANNEL =
   (process.env.RAILWAY_ENVIRONMENT ? 'slack' : '');
 export const TASK_PROVENANCE_SECRET =
   process.env.TASK_PROVENANCE_SECRET || envConfig.TASK_PROVENANCE_SECRET || '';
+export const MAIL_BROKER_URL =
+  process.env.MAIL_BROKER_URL || envConfig.MAIL_BROKER_URL || '';
+export const MAIL_CLEANUP_ENABLED =
+  (process.env.MAIL_CLEANUP_ENABLED || envConfig.MAIL_CLEANUP_ENABLED) ===
+  'true';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 

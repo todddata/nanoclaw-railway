@@ -233,7 +233,7 @@ export class GmailAdapter extends FixedProviderAdapter {
   ): Promise<AdapterActionResult> {
     if (action.operation === 'messages.list') {
       const page = await this.json(
-        `${GmailAdapter.base}/messages?maxResults=50&includeSpamTrash=true`,
+        `${GmailAdapter.base}/messages?maxResults=50&includeSpamTrash=true&labelIds=SPAM`,
         token,
       );
       const ids = Array.isArray(page.messages)
@@ -306,7 +306,11 @@ export class GmailAdapter extends FixedProviderAdapter {
   }
 }
 
-function microsoftRecord(raw: unknown, mailboxId: string): InertEmailRecord {
+function microsoftRecord(
+  raw: unknown,
+  mailboxId: string,
+  inProviderJunk = false,
+): InertEmailRecord {
   const message = object(raw);
   const sender = object(object(message.from).emailAddress);
   const body = object(message.body);
@@ -340,7 +344,8 @@ function microsoftRecord(raw: unknown, mailboxId: string): InertEmailRecord {
       expandedBytes: Buffer.byteLength(bodyContent),
       encodingErrors: 0,
     },
-    providerSpam: categories.includes('NanoClaw/ProviderSpam'),
+    providerSpam:
+      inProviderJunk || categories.includes('NanoClaw/ProviderSpam'),
   });
 }
 
@@ -388,14 +393,14 @@ export class MicrosoftAdapter extends FixedProviderAdapter {
   ): Promise<AdapterActionResult> {
     if (action.operation === 'messages.list') {
       const page = await this.json(
-        `${MicrosoftAdapter.base}/messages?$top=50&$select=${MicrosoftAdapter.select}`,
+        `${MicrosoftAdapter.base}/mailFolders/junkemail/messages?$top=50&$select=${MicrosoftAdapter.select}`,
         token,
         { headers: this.headers() },
       );
       const records = Array.isArray(page.value)
         ? page.value
             .slice(0, 50)
-            .map((item) => microsoftRecord(item, this.config.mailboxId))
+            .map((item) => microsoftRecord(item, this.config.mailboxId, true))
         : [];
       return {
         ok: true,
