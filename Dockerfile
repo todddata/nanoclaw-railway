@@ -37,8 +37,14 @@ RUN apt-get update && apt-get install -y \
     gosu \
     && rm -rf /var/lib/apt/lists/* \
     /usr/local/lib/node_modules/npm \
+    /usr/local/lib/node_modules/corepack \
     /usr/local/bin/npm \
-    /usr/local/bin/npx
+    /usr/local/bin/npx \
+    /usr/local/bin/corepack \
+    /usr/local/bin/yarn \
+    /usr/local/bin/yarnpkg \
+    /usr/local/bin/pnpm \
+    /usr/local/bin/pnpx
 
 # Copy agent-runner build output
 COPY --from=agent-builder /build/agent-runner/dist /agent-runner-dist
@@ -77,6 +83,27 @@ RUN mkdir -p /data/store /data/groups /data/data && \
 # then drops to non-root user
 COPY docker-entrypoint-railway.sh /docker-entrypoint-railway.sh
 RUN chmod +x /docker-entrypoint-railway.sh
+
+# Assert the final filesystem, after every cross-stage COPY. A stale or
+# incorrectly cached Railway layer must fail the build instead of publishing a
+# runtime with tools that can fetch or install code.
+RUN rm -rf \
+      /usr/local/lib/node_modules/npm \
+      /usr/local/lib/node_modules/corepack \
+      /usr/local/bin/npm \
+      /usr/local/bin/npx \
+      /usr/local/bin/corepack \
+      /usr/local/bin/yarn \
+      /usr/local/bin/yarnpkg \
+      /usr/local/bin/pnpm \
+      /usr/local/bin/pnpx \
+    && ! command -v npm \
+    && ! command -v npx \
+    && ! command -v corepack \
+    && ! command -v yarn \
+    && ! command -v pnpm \
+    && ! command -v git \
+    && ! command -v curl
 
 ENTRYPOINT ["/docker-entrypoint-railway.sh"]
 CMD ["node", "dist/index.js"]
