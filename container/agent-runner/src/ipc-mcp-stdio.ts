@@ -10,6 +10,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { isHardenedMailCleanupScript } from './mail-cleanup-script.js';
 
 const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -134,16 +135,22 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       .string()
       .optional()
       .describe(
-        'Optional bash script to run before waking the agent. Script must output JSON on the last line of stdout: { "wakeAgent": boolean, "data"?: any }. If wakeAgent is false, the agent is not called. Test your script with bash -c "..." before scheduling.',
+        restrictedRuntime
+          ? 'Restricted Railway runtime: only the exact hardened mail_spam_cleanup JSON object is accepted; arbitrary shell scripts are disabled.'
+          : 'Optional bash script to run before waking the agent. Script must output JSON on the last line of stdout: { "wakeAgent": boolean, "data"?: any }. If wakeAgent is false, the agent is not called. Test your script with bash -c "..." before scheduling.',
       ),
   },
   async (args) => {
-    if (restrictedRuntime && args.script) {
+    if (
+      restrictedRuntime &&
+      args.script &&
+      !isHardenedMailCleanupScript(args.script)
+    ) {
       return {
         content: [
           {
             type: 'text' as const,
-            text: 'Scheduled shell scripts are disabled in the restricted Railway runtime.',
+            text: 'Only the exact hardened mail_spam_cleanup JSON task is allowed in the restricted Railway runtime; shell scripts are disabled.',
           },
         ],
         isError: true,
@@ -403,12 +410,17 @@ server.tool(
       ),
   },
   async (args) => {
-    if (restrictedRuntime && args.script !== undefined) {
+    if (
+      restrictedRuntime &&
+      args.script !== undefined &&
+      args.script !== '' &&
+      !isHardenedMailCleanupScript(args.script)
+    ) {
       return {
         content: [
           {
             type: 'text' as const,
-            text: 'Scheduled shell scripts are disabled in the restricted Railway runtime.',
+            text: 'Only the exact hardened mail_spam_cleanup JSON task is allowed in the restricted Railway runtime; shell scripts are disabled.',
           },
         ],
         isError: true,
