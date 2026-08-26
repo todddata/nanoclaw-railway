@@ -426,7 +426,8 @@ export async function runMailReviewAction(
   }
   if (
     (options.config.action === 'recoverable_trash' &&
-      item.disposition !== 'review') ||
+      item.disposition !== 'review' &&
+      item.disposition !== 'restored') ||
     (options.config.action === 'restore' &&
       item.disposition !== 'recoverable_trash')
   ) {

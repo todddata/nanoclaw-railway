@@ -356,4 +356,48 @@ describe('mail cleanup script policy', () => {
       'restored',
     );
   });
+
+  it('allows an owner-restored reference to return to recoverable trash', async () => {
+    const execute = vi.fn(
+      async (_url: string, _action: MailBrokerActionRequest) => ({
+        ok: true as const,
+        operation: 'messages.move_deleted' as const,
+        affected: 1,
+        grantId: 'grant',
+      }),
+    );
+    const result = await runMailReviewAction({
+      config: {
+        version: 1,
+        type: 'mail_review_action',
+        provider: 'microsoft',
+        mailboxId: 'pilot@example.com',
+        action: 'recoverable_trash',
+        reviewRef: 'MR-ABCDEFGHIJKLMNOP',
+      },
+      enabled: true,
+      brokerUrl: 'http://mailbroker.railway.internal:8080',
+      provenance,
+      taskId: 'retrash-task',
+      taskProvenanceSecret: secret,
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      lookupReviewItem: () => ({
+        reference: 'MR-ABCDEFGHIJKLMNOP',
+        provider: 'microsoft',
+        mailbox_id: 'pilot@example.com',
+        message_id: 'immutable-message-id',
+        disposition: 'restored',
+        expires_at: '2026-08-30T12:00:00.000Z',
+      }),
+      updateDisposition: vi.fn(),
+      exchange: vi.fn(async () => ({
+        capability: 'capability',
+        grantId: 'grant',
+        expiresAt: '2026-08-25T12:10:00.000Z',
+      })),
+      execute,
+    });
+    expect(result.disposition).toBe('recoverable_trash');
+    expect(execute).toHaveBeenCalledOnce();
+  });
 });
