@@ -20,6 +20,7 @@ const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
 const restrictedRuntime = process.env.NANOCLAW_RESTRICTED_RUNTIME === '1';
+const interactionId = process.env.NANOCLAW_INTERACTION_ID || undefined;
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -29,7 +30,7 @@ function writeIpcFile(dir: string, data: object): string {
 
   // Atomic write: temp file then rename
   const tempPath = `${filepath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.writeFileSync(tempPath, JSON.stringify({ ...data, interactionId }, null, 2));
   fs.renameSync(tempPath, filepath);
 
   return filename;

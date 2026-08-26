@@ -9,6 +9,7 @@ import {
   setRegisteredGroup,
 } from './db.js';
 import { processTaskIpc, IpcDeps } from './ipc.js';
+import { createActiveCommandGrant } from './task-provenance.js';
 import { RegisteredGroup } from './types.js';
 
 // Set up registered groups used across tests
@@ -54,6 +55,14 @@ beforeEach(() => {
   deps = {
     sendMessage: async () => {},
     registeredGroups: () => groups,
+    getCommandGrant: () =>
+      createActiveCommandGrant({
+        workspaceId: 'T_TEST',
+        chatJid: 'slack:C_TEST',
+        userId: 'U_OWNER',
+        messageId: 'message-1',
+      }),
+    taskProvenanceSecret: 'test-secret-that-is-at-least-32-characters',
     registerGroup: (jid, group) => {
       groups[jid] = group;
       setRegisteredGroup(jid, group);
@@ -69,6 +78,43 @@ beforeEach(() => {
 // --- schedule_task authorization ---
 
 describe('schedule_task authorization', () => {
+  it('rejects scheduling without an active Slack command grant', async () => {
+    deps.getCommandGrant = () => undefined;
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'untrusted request',
+        schedule_type: 'interval',
+        schedule_value: '60000',
+        targetJid: 'main@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getAllTasks()).toHaveLength(0);
+  });
+
+  it('rejects a grant from a different agent interaction', async () => {
+    const validGrant = deps.getCommandGrant('whatsapp_main', 'expected');
+    deps.getCommandGrant = (_sourceGroup, interactionId) =>
+      interactionId === 'expected' ? validGrant : undefined;
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'stale interaction request',
+        schedule_type: 'interval',
+        schedule_value: '60000',
+        targetJid: 'main@g.us',
+        interactionId: 'stale',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+    expect(getAllTasks()).toHaveLength(0);
+  });
+
   it('main group can schedule for another group', async () => {
     await processTaskIpc(
       {

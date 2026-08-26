@@ -33,6 +33,7 @@ function createSchema(database: Database.Database): void {
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
       source_channel TEXT,
+      source_workspace_id TEXT,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
@@ -49,7 +50,9 @@ function createSchema(database: Database.Database): void {
       last_run TEXT,
       last_result TEXT,
       status TEXT DEFAULT 'active',
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      provenance_json TEXT,
+      provenance_signature TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
     CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status);
@@ -97,6 +100,21 @@ function createSchema(database: Database.Database): void {
   // Add script column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN script TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN provenance_json TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN provenance_signature TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -164,6 +182,11 @@ function createSchema(database: Database.Database): void {
   // to a Slack conversation.
   try {
     database.exec(`ALTER TABLE messages ADD COLUMN source_channel TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN source_workspace_id TEXT`);
   } catch {
     /* column already exists */
   }
@@ -304,7 +327,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, source_channel, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, source_channel, source_workspace_id, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -315,6 +338,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
     msg.source_channel ?? null,
+    msg.source_workspace_id ?? null,
     msg.reply_to_message_id ?? null,
     msg.reply_to_message_content ?? null,
     msg.reply_to_sender_name ?? null,
@@ -334,9 +358,10 @@ export function storeMessageDirect(msg: {
   is_from_me: boolean;
   is_bot_message?: boolean;
   source_channel?: string;
+  source_workspace_id?: string;
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, source_channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, source_channel, source_workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -347,6 +372,7 @@ export function storeMessageDirect(msg: {
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
     msg.source_channel ?? null,
+    msg.source_workspace_id ?? null,
   );
 }
 
@@ -364,7 +390,7 @@ export function getNewMessages(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, source_channel,
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, source_channel, source_workspace_id,
              reply_to_message_id, reply_to_message_content, reply_to_sender_name
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
@@ -398,7 +424,7 @@ export function getMessagesSince(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, source_channel,
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, source_channel, source_workspace_id,
              reply_to_message_id, reply_to_message_content, reply_to_sender_name
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
@@ -435,7 +461,7 @@ export function getThreadMessages(
   threadId: string,
 ): NewMessage[] {
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp, thread_id, source_channel
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, thread_id, source_channel, source_workspace_id
     FROM messages
     WHERE chat_jid = ? AND thread_id = ?
       AND content != '' AND content IS NOT NULL
@@ -449,8 +475,8 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, script, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, script, schedule_type, schedule_value, context_mode, next_run, status, created_at, provenance_json, provenance_signature)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -464,6 +490,8 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    task.provenance_json || null,
+    task.provenance_signature || null,
   );
 }
 
@@ -497,6 +525,8 @@ export function updateTask(
       | 'schedule_value'
       | 'next_run'
       | 'status'
+      | 'provenance_json'
+      | 'provenance_signature'
     >
   >,
 ): void {
@@ -526,6 +556,14 @@ export function updateTask(
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.provenance_json !== undefined) {
+    fields.push('provenance_json = ?');
+    values.push(updates.provenance_json || null);
+  }
+  if (updates.provenance_signature !== undefined) {
+    fields.push('provenance_signature = ?');
+    values.push(updates.provenance_signature || null);
   }
 
   if (fields.length === 0) return;

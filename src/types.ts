@@ -53,6 +53,8 @@ export interface NewMessage {
   is_bot_message?: boolean;
   /** Transport that supplied this message. Never infer command authority from chat_jid. */
   source_channel?: string;
+  /** Provider-owned workspace/tenant identifier used for command provenance. */
+  source_workspace_id?: string;
   thread_id?: string;
   reply_to_message_id?: string;
   reply_to_message_content?: string;
@@ -73,6 +75,8 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  provenance_json?: string | null;
+  provenance_signature?: string | null;
 }
 
 export interface TaskRunLog {

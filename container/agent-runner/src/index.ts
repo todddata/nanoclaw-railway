@@ -34,6 +34,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  interactionId?: string;
   assistantName?: string;
   script?: string;
 }
@@ -519,12 +520,16 @@ async function runQuery(
             'WebSearch',
             'WebFetch',
             'mcp__nanoclaw__send_message',
-            'mcp__nanoclaw__schedule_task',
             'mcp__nanoclaw__list_tasks',
-            'mcp__nanoclaw__pause_task',
-            'mcp__nanoclaw__resume_task',
-            'mcp__nanoclaw__cancel_task',
-            'mcp__nanoclaw__update_task',
+            ...(!containerInput.isScheduledTask
+              ? [
+                  'mcp__nanoclaw__schedule_task',
+                  'mcp__nanoclaw__pause_task',
+                  'mcp__nanoclaw__resume_task',
+                  'mcp__nanoclaw__cancel_task',
+                  'mcp__nanoclaw__update_task',
+                ]
+              : []),
           ]
         : [
             'Bash',
@@ -545,7 +550,9 @@ async function runQuery(
             'ToolSearch',
             'Skill',
             'NotebookEdit',
-            'mcp__nanoclaw__*',
+            ...(containerInput.isScheduledTask
+              ? ['mcp__nanoclaw__send_message', 'mcp__nanoclaw__list_tasks']
+              : ['mcp__nanoclaw__*']),
             ...extraMcpToolPatterns,
           ],
       env: sdkEnv,
@@ -561,6 +568,7 @@ async function runQuery(
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
             NANOCLAW_RESTRICTED_RUNTIME: restrictedRuntime ? '1' : '0',
+            NANOCLAW_INTERACTION_ID: containerInput.interactionId || '',
           },
         },
         ...extraMcpServers,
