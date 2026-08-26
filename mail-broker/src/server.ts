@@ -88,10 +88,16 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     const brokerError = error instanceof BrokerError ? error : undefined;
     if (!brokerError) {
-      audit({
-        event: 'mail_action_rejected',
-        error: error instanceof Error ? error.message : 'unknown_error',
-      });
+      try {
+        audit({
+          event: 'mail_action_rejected',
+          outcome: 'rejected',
+          reasonCode: 'request_rejected',
+          error: error instanceof Error ? error.message : 'unknown_error',
+        });
+      } catch {
+        return json(response, 503, { error: 'audit_unavailable' });
+      }
     }
     return json(response, brokerError?.status || 403, {
       error: brokerError?.code || 'request_rejected',

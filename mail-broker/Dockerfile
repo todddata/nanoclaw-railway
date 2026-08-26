@@ -14,8 +14,9 @@ WORKDIR /app
 COPY --from=build --chown=node:node /build/package.json /build/package-lock.json ./
 COPY --from=build --chown=node:node /build/node_modules ./node_modules
 COPY --from=build --chown=node:node /build/dist ./dist
+COPY --chown=root:root entrypoint.sh /usr/local/bin/mail-broker-entrypoint
 RUN mkdir -p /data && chown node:node /data
+RUN chmod 0755 /usr/local/bin/mail-broker-entrypoint
 
-USER node
 EXPOSE 3000
-CMD ["node", "dist/server.js"]
+ENTRYPOINT ["/usr/local/bin/mail-broker-entrypoint"]

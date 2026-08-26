@@ -136,10 +136,18 @@ export class BrokerEngine {
       return result;
     } catch (error) {
       if (error instanceof BrokerError) throw error;
-      this.recordRejection(
-        error instanceof Error ? error.message : 'unknown_error',
-        action,
-      );
+      try {
+        this.recordRejection(
+          error instanceof Error ? error.message : 'unknown_error',
+          action,
+        );
+      } catch {
+        throw new BrokerError(
+          'Required audit storage is unavailable',
+          503,
+          'audit_unavailable',
+        );
+      }
       throw new BrokerError(
         error instanceof Error ? error.message : 'Request rejected',
       );
