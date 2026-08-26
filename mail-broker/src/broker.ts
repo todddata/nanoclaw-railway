@@ -1,7 +1,11 @@
 import { verifyCapability } from './capability.js';
 import { MockMailboxAdapter } from './mock-adapter.js';
 import { authorizeAction, parseActionRequest } from './policy.js';
-import { BrokerActionRequest, BrokerActionResult } from './types.js';
+import {
+  BrokerActionRequest,
+  BrokerActionResult,
+  MailboxAdapter,
+} from './types.js';
 
 export interface BrokerConfig {
   secret: string;
@@ -9,7 +13,7 @@ export interface BrokerConfig {
   allowedSlackChannel: string;
   killSwitch?: boolean;
   revokedGrantIds?: Iterable<string>;
-  adapter?: MockMailboxAdapter;
+  adapter?: MailboxAdapter;
   now?: () => Date;
   audit?: (event: Record<string, unknown>) => void;
   policyVersion?: string;
@@ -27,8 +31,14 @@ export class BrokerError extends Error {
   }
 }
 
-export function brokerHealth(mode: string, killSwitch: boolean) {
-  const configuredMode = mode === 'mock';
+export function brokerHealth(
+  mode: string,
+  killSwitch: boolean,
+  providerConfigured = mode === 'mock',
+) {
+  const configuredMode =
+    mode === 'mock' ||
+    ((mode === 'gmail' || mode === 'microsoft') && providerConfigured);
   return {
     status: configuredMode ? 200 : 503,
     body: {
@@ -45,14 +55,14 @@ export class BrokerEngine {
   private readonly revokedGrantIds: Set<string>;
   private denialWindowStartedAt = 0;
   private denialCount = 0;
-  readonly adapter: MockMailboxAdapter;
+  readonly adapter: MailboxAdapter;
 
   constructor(private readonly config: BrokerConfig) {
     this.revokedGrantIds = new Set(config.revokedGrantIds || []);
     this.adapter = config.adapter || new MockMailboxAdapter();
   }
 
-  execute(raw: unknown): BrokerActionResult {
+  async execute(raw: unknown): Promise<BrokerActionResult> {
     if (this.config.killSwitch) {
       this.recordRejection('kill_switch_active');
       throw new BrokerError(
@@ -120,7 +130,7 @@ export class BrokerEngine {
         affected: requestedActions,
       });
 
-      const adapterResult = this.adapter.execute(action);
+      const adapterResult = await this.adapter.execute(action);
       const result: BrokerActionResult = {
         ...adapterResult,
         grantId: capability.grantId,

@@ -46,11 +46,20 @@ export interface BrokerActionRequest {
 
 export interface BrokerActionResult {
   ok: true;
-  mode: 'mock';
+  mode: 'mock' | MailProvider;
   operation: AllowedOperation;
   affected: number;
   grantId: string;
   messages?: MockMessageView[];
+  records?: InertEmailRecord[];
+}
+
+export type AdapterActionResult = Omit<BrokerActionResult, 'grantId'>;
+
+export interface MailboxAdapter {
+  execute(
+    action: BrokerActionRequest,
+  ): AdapterActionResult | Promise<AdapterActionResult>;
 }
 
 export interface MockMessageView {

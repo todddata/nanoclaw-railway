@@ -90,7 +90,7 @@ function engine(
   });
 }
 
-test('executes recoverable Gmail quarantine, trash, and restore end to end', () => {
+test('executes recoverable Gmail quarantine, trash, and restore end to end', async () => {
   const broker = engine();
   const token = capability([
     'messages.modify_labels',
@@ -98,7 +98,7 @@ test('executes recoverable Gmail quarantine, trash, and restore end to end', () 
     'messages.untrash',
   ]);
 
-  broker.execute(
+  await broker.execute(
     request(
       token,
       'messages.modify_labels',
@@ -109,7 +109,7 @@ test('executes recoverable Gmail quarantine, trash, and restore end to end', () 
       { addLabels: ['NanoClaw/Quarantine'], removeLabels: ['INBOX'] },
     ),
   );
-  broker.execute(
+  await broker.execute(
     request(
       token,
       'messages.trash',
@@ -119,9 +119,12 @@ test('executes recoverable Gmail quarantine, trash, and restore end to end', () 
       'gmail-trash-001',
     ),
   );
-  assert.equal(broker.adapter.snapshot()[0]?.location, 'trash');
+  assert.equal(
+    (broker.adapter as MockMailboxAdapter).snapshot()[0]?.location,
+    'trash',
+  );
 
-  broker.execute(
+  await broker.execute(
     request(
       token,
       'messages.untrash',
@@ -131,15 +134,15 @@ test('executes recoverable Gmail quarantine, trash, and restore end to end', () 
       'gmail-restore-001',
     ),
   );
-  const restored = broker.adapter.snapshot()[0];
+  const restored = (broker.adapter as MockMailboxAdapter).snapshot()[0];
   assert.equal(restored?.location, 'inbox');
   assert.deepEqual(restored?.labels, ['NanoClaw/Quarantine']);
 });
 
-test('executes recoverable Microsoft delete and restore end to end', () => {
+test('executes recoverable Microsoft delete and restore end to end', async () => {
   const broker = engine();
   const token = capability(['messages.move_deleted', 'messages.restore']);
-  broker.execute(
+  await broker.execute(
     request(
       token,
       'messages.move_deleted',
@@ -149,8 +152,11 @@ test('executes recoverable Microsoft delete and restore end to end', () => {
       'outlook-delete-001',
     ),
   );
-  assert.equal(broker.adapter.snapshot()[1]?.location, 'deleted');
-  broker.execute(
+  assert.equal(
+    (broker.adapter as MockMailboxAdapter).snapshot()[1]?.location,
+    'deleted',
+  );
+  await broker.execute(
     request(
       token,
       'messages.restore',
@@ -160,10 +166,13 @@ test('executes recoverable Microsoft delete and restore end to end', () => {
       'outlook-restore-001',
     ),
   );
-  assert.equal(broker.adapter.snapshot()[1]?.location, 'inbox');
+  assert.equal(
+    (broker.adapter as MockMailboxAdapter).snapshot()[1]?.location,
+    'inbox',
+  );
 });
 
-test('scopes idempotency to a grant and performs one side effect', () => {
+test('scopes idempotency to a grant and performs one side effect', async () => {
   class CountingAdapter extends MockMailboxAdapter {
     calls = 0;
     override execute(action: BrokerActionRequest) {
@@ -182,12 +191,12 @@ test('scopes idempotency to a grant and performs one side effect', () => {
     'gmail-1',
     'idempotent-trash-001',
   );
-  broker.execute(action);
-  broker.execute(action);
+  await broker.execute(action);
+  await broker.execute(action);
   assert.equal(adapter.calls, 1);
 });
 
-test('rejects revoked grants, over-quota actions, and wrong-provider operations', () => {
+test('rejects revoked grants, over-quota actions, and wrong-provider operations', async () => {
   const revoked = new BrokerEngine({
     secret,
     allowedSlackUser: 'U123',
@@ -204,16 +213,16 @@ test('rejects revoked grants, over-quota actions, and wrong-provider operations'
     'gmail-1',
     'revoked-trash-001',
   );
-  assert.throws(() => revoked.execute(trash), /revoked/);
+  await assert.rejects(() => revoked.execute(trash), /revoked/);
 
   const quotaBroker = engine();
   const quotaToken = capability(['messages.trash'], { maxActions: 1 });
-  quotaBroker.execute({
+  await quotaBroker.execute({
     ...trash,
     capability: quotaToken,
     idempotencyKey: 'quota-trash-001',
   });
-  assert.throws(
+  await assert.rejects(
     () =>
       quotaBroker.execute({
         ...trash,
@@ -225,7 +234,7 @@ test('rejects revoked grants, over-quota actions, and wrong-provider operations'
 
   const providerBroker = engine();
   const wrongProviderToken = capability(['messages.trash']);
-  assert.throws(
+  await assert.rejects(
     () =>
       providerBroker.execute(
         request(
@@ -241,7 +250,7 @@ test('rejects revoked grants, over-quota actions, and wrong-provider operations'
   );
 });
 
-test('kill switch rejects every action before any side effect', () => {
+test('kill switch rejects every action before any side effect', async () => {
   class CountingAdapter extends MockMailboxAdapter {
     calls = 0;
     override execute(action: BrokerActionRequest) {
@@ -259,7 +268,7 @@ test('kill switch rejects every action before any side effect', () => {
     now: () => now,
   });
   const token = capability(['messages.trash']);
-  assert.throws(
+  await assert.rejects(
     () =>
       broker.execute(
         request(
@@ -288,7 +297,7 @@ test('kill switch preserves liveness while advertising actions disabled', () => 
   });
 });
 
-test('emits complete action audit fields and a repeated-denial alert', () => {
+test('emits complete action audit fields and a repeated-denial alert', async () => {
   const events: Record<string, unknown>[] = [];
   const broker = new BrokerEngine({
     secret,
@@ -302,7 +311,7 @@ test('emits complete action audit fields and a repeated-denial alert', () => {
     audit: (event) => events.push(event),
   });
   const token = capability(['messages.trash']);
-  broker.execute(
+  await broker.execute(
     request(
       token,
       'messages.trash',
@@ -328,13 +337,13 @@ test('emits complete action audit fields and a repeated-denial alert', () => {
   });
   assert.equal(events[1]?.event, 'mail_action_completed');
   assert.equal(events[1]?.outcome, 'completed');
-  assert.throws(() => broker.execute({}), /Invalid request/);
-  assert.throws(() => broker.execute({}), /Invalid request/);
+  await assert.rejects(() => broker.execute({}), /Invalid request/);
+  await assert.rejects(() => broker.execute({}), /Invalid request/);
   assert.equal(events.at(-1)?.event, 'mail_security_alert');
   assert.equal(events.at(-1)?.reasonCode, 'repeated_denials');
 });
 
-test('audit sink failure prevents mailbox mutation', () => {
+test('audit sink failure prevents mailbox mutation', async () => {
   const adapter = new MockMailboxAdapter([gmailMessage]);
   const broker = new BrokerEngine({
     secret,
@@ -347,7 +356,7 @@ test('audit sink failure prevents mailbox mutation', () => {
     },
   });
   const token = capability(['messages.trash']);
-  assert.throws(
+  await assert.rejects(
     () =>
       broker.execute(
         request(

@@ -43,8 +43,8 @@ Email is always untrusted data; it is never accepted as a command source.
 
 `MAIL_BROKER_MODE=mock` validates and audits actions without connecting to a
 mailbox. Its stateful provider simulator exercises quarantine, recoverable
-trash/deleted-items, and restore behavior. This is the only implemented runtime
-mode until real provider adapters and their adversarial tests are complete.
+trash/deleted-items, and restore behavior. Keep Railway in this mode until one
+pilot mailbox has been explicitly selected and authorized.
 
 Required staging variables:
 
@@ -56,6 +56,33 @@ Required staging variables:
 - `MAIL_BROKER_TASK_PROVENANCE_SECRET` (same host provenance verifier key; not
   the broker capability-signing key)
 - `MAIL_BROKER_MAILBOX_IDS` (comma-separated explicit mailbox allowlist)
+
+## Provider modes
+
+The broker implements fixed-surface `gmail` and `microsoft` modes. Both verify
+the authenticated account identity against `MAIL_BROKER_PROVIDER_MAILBOX_ID`
+before reading a message. Provider URLs are constants, redirects are rejected,
+attachments are never downloaded, and provider error bodies are never returned
+or logged. The OAuth refresh token and client credential belong only on the
+MailBroker service; never copy them to NanoClaw or expose them to the model.
+
+For Gmail, set `MAIL_BROKER_MODE=gmail`,
+`MAIL_BROKER_PROVIDER_MAILBOX_ID`, `MAIL_BROKER_GOOGLE_CLIENT_ID`,
+`MAIL_BROKER_GOOGLE_CLIENT_SECRET`, and `MAIL_BROKER_GOOGLE_REFRESH_TOKEN`.
+The fixed scope is `gmail.modify`. The adapter supports list/get, label changes,
+trash, and untrash; it has no send or permanent-delete route.
+
+For Microsoft 365, set `MAIL_BROKER_MODE=microsoft`,
+`MAIL_BROKER_PROVIDER_MAILBOX_ID`, `MAIL_BROKER_MICROSOFT_TENANT_ID`,
+`MAIL_BROKER_MICROSOFT_CLIENT_ID`, `MAIL_BROKER_MICROSOFT_CLIENT_SECRET`, and
+`MAIL_BROKER_MICROSOFT_REFRESH_TOKEN`. The fixed delegated permissions are
+`Mail.ReadWrite` and `User.Read`. The adapter supports list/get, categories,
+and recoverable moves to Deleted Items or Inbox; it has no delete, send, reply,
+or forward route.
+
+If any required provider variable is absent, the health and action endpoints
+fail closed with `503`. Provider activation also requires the selected mailbox
+to appear in `MAIL_BROKER_MAILBOX_IDS`.
 
 Optional safety controls:
 
@@ -75,4 +102,4 @@ credential, inspect the structured audit log, then redeploy with the kill switch
 disabled only after the incident is understood. The API intentionally cannot
 send mail or permanently delete messages.
 
-Without all three values, the action endpoint returns `503`.
+Without the required mode configuration, the action endpoint returns `503`.

@@ -1,13 +1,14 @@
 import {
   BrokerActionRequest,
   BrokerActionResult,
+  MailboxAdapter,
   MockMessageView,
 } from './types.js';
 
 const GMAIL_ONLY = new Set(['messages.trash', 'messages.untrash']);
 const MICROSOFT_ONLY = new Set(['messages.move_deleted', 'messages.restore']);
 
-export class MockMailboxAdapter {
+export class MockMailboxAdapter implements MailboxAdapter {
   private readonly messages = new Map<string, MockMessageView>();
 
   constructor(seed: MockMessageView[] = []) {
