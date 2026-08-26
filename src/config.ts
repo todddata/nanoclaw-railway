@@ -43,6 +43,7 @@ export const MAIL_BROKER_URL =
 export const MAIL_CLEANUP_ENABLED =
   (process.env.MAIL_CLEANUP_ENABLED || envConfig.MAIL_CLEANUP_ENABLED) ===
   'true';
+export const HEALTH_PORT = Number.parseInt(process.env.PORT || '8080', 10);
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
