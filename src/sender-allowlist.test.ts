@@ -4,6 +4,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  isOwnerOnlyDropMode,
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
@@ -195,6 +196,29 @@ describe('shouldDropMessage', () => {
     };
     expect(shouldDropMessage('g1', cfg)).toBe(true);
     expect(shouldDropMessage('g2', cfg)).toBe(false);
+  });
+});
+
+describe('isOwnerOnlyDropMode', () => {
+  it('requires exactly one allowed sender and drop mode', () => {
+    const ownerOnly: SenderAllowlistConfig = {
+      default: { allow: ['todd'], mode: 'drop' },
+      chats: {},
+      logDenied: true,
+    };
+    expect(isOwnerOnlyDropMode('g1', ownerOnly)).toBe(true);
+    expect(
+      isOwnerOnlyDropMode('g1', {
+        ...ownerOnly,
+        default: { allow: ['todd', 'other'], mode: 'drop' },
+      }),
+    ).toBe(false);
+    expect(
+      isOwnerOnlyDropMode('g1', {
+        ...ownerOnly,
+        default: { allow: ['todd'], mode: 'trigger' },
+      }),
+    ).toBe(false);
   });
 });
 

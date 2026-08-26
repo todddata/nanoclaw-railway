@@ -123,3 +123,28 @@ export function detectAuthMode(): AuthMode {
   const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
   return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
 }
+
+/** Report credential presence without exposing credential material. */
+export function hasCredentialProxyCredential(): boolean {
+  const secrets = readEnvFile([
+    'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_AUTH_TOKEN',
+  ]);
+  return hasCredentialMaterial(secrets);
+}
+
+export function hasCredentialMaterial(
+  secrets: Partial<
+    Record<
+      'ANTHROPIC_API_KEY' | 'CLAUDE_CODE_OAUTH_TOKEN' | 'ANTHROPIC_AUTH_TOKEN',
+      string
+    >
+  >,
+): boolean {
+  return Boolean(
+    secrets.ANTHROPIC_API_KEY ||
+    secrets.CLAUDE_CODE_OAUTH_TOKEN ||
+    secrets.ANTHROPIC_AUTH_TOKEN,
+  );
+}

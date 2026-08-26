@@ -103,6 +103,18 @@ function getEntry(
   return cfg.chats[chatJid] ?? cfg.default;
 }
 
+export function isOwnerOnlyDropMode(
+  chatJid: string,
+  cfg: SenderAllowlistConfig,
+): boolean {
+  const entry = getEntry(chatJid, cfg);
+  return (
+    entry.mode === 'drop' &&
+    Array.isArray(entry.allow) &&
+    entry.allow.length === 1
+  );
+}
+
 export function isSenderAllowed(
   chatJid: string,
   sender: string,

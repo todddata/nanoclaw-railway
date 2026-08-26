@@ -40,9 +40,11 @@ volume. Do not copy MailBroker OAuth material into NanoClaw.
 ## Verification after every deployment
 
 Railway must report the deployment healthy through `GET /healthz`. The check
-returns success only while Slack is connected and, when mailbox automation is
-enabled, MailBroker reports a persistent audit log and configured signed-grant
-exchange. It never returns credentials, provider URLs, or mailbox contents.
+returns success only while Slack is connected, the Anthropic credential is
+configured, the exact owner-only Slack control plane is registered, and, when
+mailbox automation is enabled, both the agent mailbox profile and MailBroker's
+persistent audit plus signed-grant exchange are ready. It never returns
+credentials, provider URLs, mailbox identifiers, or mailbox contents.
 
 1. Confirm the GitHub `verify` check passed for the exact deployed commit.
 2. Confirm both Railway services are running one replica and their volumes are
