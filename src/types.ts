@@ -51,6 +51,8 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  /** Transport that supplied this message. Never infer command authority from chat_jid. */
+  source_channel?: string;
   thread_id?: string;
   reply_to_message_id?: string;
   reply_to_message_content?: string;

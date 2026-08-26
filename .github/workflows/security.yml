@@ -40,6 +40,10 @@ jobs:
         working-directory: railway-runtime
         run: npm ci --ignore-scripts && npm audit --omit=dev --audit-level=high
 
+      - name: Install, test, and audit mail broker
+        working-directory: mail-broker
+        run: npm ci && npm run typecheck && npm test && npm audit --omit=dev --audit-level=high
+
       - name: Scan repository for committed secrets
         uses: gitleaks/gitleaks-action@v2
         env:

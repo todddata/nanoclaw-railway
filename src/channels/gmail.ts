@@ -317,6 +317,7 @@ export class GmailChannel implements Channel {
       content,
       timestamp,
       is_from_me: false,
+      source_channel: 'gmail',
     });
 
     // Mark as read
