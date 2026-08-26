@@ -5,6 +5,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 
 import {
   ASSISTANT_NAME,
+  COMMAND_CHANNEL,
   CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
@@ -18,6 +19,7 @@ import {
   SLACK_MAIN_CHANNEL_ID,
   TIMEZONE,
 } from './config.js';
+import { validateCommandSource } from './command-source.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -751,6 +753,22 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
+      const sourceDecision = validateCommandSource(chatJid, msg, {
+        allowedChannel: COMMAND_CHANNEL,
+      });
+      if (!sourceDecision.allowed) {
+        logger.warn(
+          {
+            chatJid,
+            sender: msg.sender,
+            sourceChannel: msg.source_channel || 'unknown',
+            reason: sourceDecision.reason,
+          },
+          'Rejected non-command-source message before storage',
+        );
+        return;
+      }
+
       // Enforce drop-mode authorization before command handling or storage.
       // Only this NanoClaw instance's own messages bypass the sender check.
       if (!msg.is_from_me && registeredGroups[chatJid]) {

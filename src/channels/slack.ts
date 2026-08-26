@@ -149,6 +149,7 @@ export class SlackChannel implements Channel {
         timestamp,
         is_from_me: isOwnBotMessage,
         is_bot_message: isBotMessage,
+        source_channel: 'slack',
         thread_id: threadId,
       });
     });

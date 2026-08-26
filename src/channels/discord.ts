@@ -176,6 +176,7 @@ export class DiscordChannel implements Channel {
         content,
         timestamp,
         is_from_me: false,
+        source_channel: 'discord',
         thread_id: threadId,
       });
 

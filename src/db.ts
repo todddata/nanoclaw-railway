@@ -32,6 +32,7 @@ function createSchema(database: Database.Database): void {
       timestamp TEXT,
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
+      source_channel TEXT,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
@@ -157,6 +158,24 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Record the transport that actually supplied a message. This must not be
+  // inferred from chat_jid because data-only connectors can route summaries
+  // to a Slack conversation.
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN source_channel TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  database.exec(
+    `UPDATE messages SET source_channel = CASE
+      WHEN chat_jid LIKE 'slack:%' THEN 'slack'
+      WHEN chat_jid LIKE 'gmail:%' THEN 'gmail'
+      WHEN chat_jid LIKE 'dc:%' THEN 'discord'
+      WHEN chat_jid LIKE '%@g.us' OR chat_jid LIKE '%@s.whatsapp.net' THEN 'whatsapp'
+      ELSE source_channel
+    END WHERE source_channel IS NULL`,
+  );
 }
 
 export function initDatabase(): void {
@@ -285,7 +304,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, source_channel, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -295,6 +314,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.source_channel ?? null,
     msg.reply_to_message_id ?? null,
     msg.reply_to_message_content ?? null,
     msg.reply_to_sender_name ?? null,
@@ -313,9 +333,10 @@ export function storeMessageDirect(msg: {
   timestamp: string;
   is_from_me: boolean;
   is_bot_message?: boolean;
+  source_channel?: string;
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, source_channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -325,6 +346,7 @@ export function storeMessageDirect(msg: {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.source_channel ?? null,
   );
 }
 
@@ -342,7 +364,7 @@ export function getNewMessages(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, source_channel,
              reply_to_message_id, reply_to_message_content, reply_to_sender_name
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
@@ -376,7 +398,7 @@ export function getMessagesSince(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, source_channel,
              reply_to_message_id, reply_to_message_content, reply_to_sender_name
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
@@ -413,7 +435,7 @@ export function getThreadMessages(
   threadId: string,
 ): NewMessage[] {
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp, thread_id
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, thread_id, source_channel
     FROM messages
     WHERE chat_jid = ? AND thread_id = ?
       AND content != '' AND content IS NOT NULL

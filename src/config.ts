@@ -13,6 +13,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_HAS_OWN_NUMBER',
   'SLACK_MAIN_CHANNEL_ID',
   'REQUIRE_TRIGGER_IN_MAIN',
+  'NANOCLAW_COMMAND_CHANNEL',
   'ONECLI_URL',
   'TZ',
 ]);
@@ -25,6 +26,13 @@ export const ASSISTANT_HAS_OWN_NUMBER =
 export const REQUIRE_TRIGGER_IN_MAIN =
   (process.env.REQUIRE_TRIGGER_IN_MAIN || envConfig.REQUIRE_TRIGGER_IN_MAIN) ===
   'true';
+// Railway is a Slack-controlled deployment. Other transports may later be
+// connected as untrusted data sources, but they must never become command
+// sources merely by delivering content into the main Slack conversation.
+export const COMMAND_CHANNEL =
+  process.env.NANOCLAW_COMMAND_CHANNEL ||
+  envConfig.NANOCLAW_COMMAND_CHANNEL ||
+  (process.env.RAILWAY_ENVIRONMENT ? 'slack' : '');
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
