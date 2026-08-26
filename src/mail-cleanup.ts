@@ -84,10 +84,14 @@ export function neutralizeMailDisplay(value: string): string {
     '~': '～',
     '`': 'ˋ',
     '|': '¦',
+    '.': '․',
+    ':': '∶',
+    '/': '⁄',
+    '\\': '⧵',
   };
   return value
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '[link removed]')
-    .replace(/[<>@#&*_~`|]/g, (character) => replacements[character])
+    .replace(/[<>@#&*_~`|.:/\\]/g, (character) => replacements[character])
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 240);
