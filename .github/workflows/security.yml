@@ -47,6 +47,15 @@ jobs:
       - name: Build production container image
         run: docker build --tag nanoclaw:${{ github.sha }} .
 
+      - name: Verify restricted runtime entrypoint
+        run: |
+          docker run --rm nanoclaw:${{ github.sha }} sh -lc '
+            test "$(id -u)" = "1000"
+            for command_name in npm npx corepack yarn yarnpkg pnpm pnpx git curl; do
+              ! command -v "$command_name"
+            done
+          '
+
       - name: Scan production container image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
