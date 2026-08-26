@@ -5,6 +5,15 @@ export interface CommandSourcePolicy {
   allowedChatJid?: string;
 }
 
+export function isCommandPlaneChat(
+  chatJid: string,
+  policy: CommandSourcePolicy,
+): boolean {
+  if (!policy.allowedChannel) return true;
+  if (!chatJid.startsWith(`${policy.allowedChannel}:`)) return false;
+  return !policy.allowedChatJid || chatJid === policy.allowedChatJid;
+}
+
 export function validateCommandSource(
   chatJid: string,
   message: NewMessage,
@@ -19,10 +28,13 @@ export function validateCommandSource(
     };
   }
 
-  if (!chatJid.startsWith(`${policy.allowedChannel}:`)) {
+  if (!isCommandPlaneChat(chatJid, policy)) {
     return {
       allowed: false,
-      reason: `Command destination does not belong to ${policy.allowedChannel}.`,
+      reason:
+        policy.allowedChatJid && chatJid !== policy.allowedChatJid
+          ? 'Conversation is outside the configured command plane.'
+          : `Command destination does not belong to ${policy.allowedChannel}.`,
     };
   }
 
@@ -30,13 +42,6 @@ export function validateCommandSource(
     return {
       allowed: false,
       reason: 'Message destination does not match the receiving conversation.',
-    };
-  }
-
-  if (policy.allowedChatJid && chatJid !== policy.allowedChatJid) {
-    return {
-      allowed: false,
-      reason: 'Conversation is outside the configured command plane.',
     };
   }
 
