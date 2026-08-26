@@ -92,6 +92,14 @@ export function authorizeAction(
   if (needsMessageIds && !request.messageIds?.length) {
     throw new Error('Message IDs are required');
   }
+  if (
+    needsMessageIds &&
+    request.messageIds?.some(
+      (messageId) => !capability.messageIds.includes(messageId),
+    )
+  ) {
+    throw new Error('Message is outside capability scope');
+  }
   if (request.operation !== 'messages.modify_labels') {
     if (request.addLabels || request.removeLabels) {
       throw new Error('Labels are only valid for messages.modify_labels');

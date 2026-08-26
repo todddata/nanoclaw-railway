@@ -20,6 +20,7 @@ function payload(
       taskId: 'task-1',
     },
     mailboxIds: ['mailbox@example.com'],
+    messageIds: ['message-1'],
     operations: ['messages.list', 'messages.trash'],
     issuedAt: '2026-08-25T12:00:00.000Z',
     expiresAt: '2026-08-25T13:00:00.000Z',

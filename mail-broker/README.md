@@ -20,6 +20,12 @@ Email is always untrusted data; it is never accepted as a command source.
 - Model-only spam decisions quarantine for seven days. Provider spam or an
   explicit blocklist may move to recoverable trash. Sensitive or uncertain mail
   goes to review.
+- Classifier output is a three-field schema (classification, confidence, and
+  approved model version) with no tools or credentials. Per-mailbox allowlists,
+  blocklists, sensitive-topic protection, confidence thresholds, and run quotas
+  are enforced outside the classifier.
+- Non-list capabilities bind exact message IDs as well as mailbox, operation,
+  Slack provenance, expiry, and quota. A classifier cannot mint or widen them.
 - Email fields are normalized as explicitly untrusted data. Active HTML and
   external links are removed; attachments, calendar parts, embedded messages,
   and archives are quarantined without being opened.
