@@ -2,7 +2,12 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
-import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  ASSISTANT_NAME,
+  SCHEDULER_POLL_INTERVAL,
+  TASK_PROVENANCE_SECRET,
+  TIMEZONE,
+} from './config.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -19,6 +24,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { verifyScheduledTask } from './task-provenance.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -80,6 +86,25 @@ async function runTask(
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
+  try {
+    verifyScheduledTask(task, TASK_PROVENANCE_SECRET);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    updateTask(task.id, { status: 'paused' });
+    logger.error(
+      { taskId: task.id, error },
+      'Scheduled task blocked by provenance policy',
+    );
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: 'error',
+      result: null,
+      error,
+    });
+    return;
+  }
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(task.group_folder);

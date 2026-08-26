@@ -9,6 +9,11 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  ActiveCommandGrant,
+  isActiveCommandGrant,
+  signScheduledTask,
+} from './task-provenance.js';
+import {
   addMcpServer,
   listMcpServers,
   rebuildMcpJson,
@@ -19,11 +24,16 @@ import {
   listSkills,
   removeSkill,
 } from './skill-installer.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  getCommandGrant: (
+    sourceGroup: string,
+    interactionId: string | undefined,
+  ) => ActiveCommandGrant | undefined;
+  taskProvenanceSecret: string;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
   getAvailableGroups: () => AvailableGroup[];
@@ -187,6 +197,7 @@ export async function processTaskIpc(
     // For install_skills
     repo?: string;
     requestId?: string;
+    interactionId?: string;
     // For add_mcp_server
     command?: string;
     args?: string[];
@@ -197,9 +208,23 @@ export async function processTaskIpc(
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
+  const activeGrant = deps.getCommandGrant(sourceGroup, data.interactionId);
+
+  const requireSlackGrant = (operation: string): ActiveCommandGrant | null => {
+    if (!isActiveCommandGrant(activeGrant) || !deps.taskProvenanceSecret) {
+      logger.warn(
+        { sourceGroup, operation },
+        'Task mutation rejected without an active Slack command grant',
+      );
+      return null;
+    }
+    return activeGrant;
+  };
 
   switch (data.type) {
-    case 'schedule_task':
+    case 'schedule_task': {
+      const scheduleGrant = requireSlackGrant('schedule_task');
+      if (!scheduleGrant) break;
       if (
         data.prompt &&
         data.schedule_type &&
@@ -274,7 +299,7 @@ export async function processTaskIpc(
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
-        createTask({
+        const task: Omit<ScheduledTask, 'last_run' | 'last_result'> = {
           id: taskId,
           group_folder: targetFolder,
           chat_jid: targetJid,
@@ -286,7 +311,13 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
-        });
+        };
+        const signed = signScheduledTask(
+          task,
+          scheduleGrant,
+          deps.taskProvenanceSecret,
+        );
+        createTask({ ...task, ...signed });
         logger.info(
           { taskId, sourceGroup, targetFolder, contextMode },
           'Task created via IPC',
@@ -294,8 +325,10 @@ export async function processTaskIpc(
         deps.onTasksChanged();
       }
       break;
+    }
 
     case 'pause_task':
+      if (!requireSlackGrant('pause_task')) break;
       if (data.taskId) {
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
@@ -315,6 +348,7 @@ export async function processTaskIpc(
       break;
 
     case 'resume_task':
+      if (!requireSlackGrant('resume_task')) break;
       if (data.taskId) {
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
@@ -334,6 +368,7 @@ export async function processTaskIpc(
       break;
 
     case 'cancel_task':
+      if (!requireSlackGrant('cancel_task')) break;
       if (data.taskId) {
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
@@ -352,7 +387,9 @@ export async function processTaskIpc(
       }
       break;
 
-    case 'update_task':
+    case 'update_task': {
+      const updateGrant = requireSlackGrant('update_task');
+      if (!updateGrant) break;
       if (data.taskId) {
         const task = getTaskById(data.taskId);
         if (!task) {
@@ -407,7 +444,13 @@ export async function processTaskIpc(
           }
         }
 
-        updateTask(data.taskId, updates);
+        const updatedTask = { ...task, ...updates };
+        const signed = signScheduledTask(
+          updatedTask,
+          updateGrant,
+          deps.taskProvenanceSecret,
+        );
+        updateTask(data.taskId, { ...updates, ...signed });
         logger.info(
           { taskId: data.taskId, sourceGroup, updates },
           'Task updated via IPC',
@@ -415,6 +458,7 @@ export async function processTaskIpc(
         deps.onTasksChanged();
       }
       break;
+    }
 
     case 'refresh_groups':
       // Only main group can request a refresh

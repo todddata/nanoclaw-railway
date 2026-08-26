@@ -14,6 +14,7 @@ const envConfig = readEnvFile([
   'SLACK_MAIN_CHANNEL_ID',
   'REQUIRE_TRIGGER_IN_MAIN',
   'NANOCLAW_COMMAND_CHANNEL',
+  'TASK_PROVENANCE_SECRET',
   'ONECLI_URL',
   'TZ',
 ]);
@@ -33,6 +34,8 @@ export const COMMAND_CHANNEL =
   process.env.NANOCLAW_COMMAND_CHANNEL ||
   envConfig.NANOCLAW_COMMAND_CHANNEL ||
   (process.env.RAILWAY_ENVIRONMENT ? 'slack' : '');
+export const TASK_PROVENANCE_SECRET =
+  process.env.TASK_PROVENANCE_SECRET || envConfig.TASK_PROVENANCE_SECRET || '';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 

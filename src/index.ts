@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
 import { OneCLI } from '@onecli-sh/sdk';
 
@@ -17,6 +18,7 @@ import {
   POLL_INTERVAL,
   REQUIRE_TRIGGER_IN_MAIN,
   SLACK_MAIN_CHANNEL_ID,
+  TASK_PROVENANCE_SECRET,
   TIMEZONE,
 } from './config.js';
 import { validateCommandSource } from './command-source.js';
@@ -80,6 +82,11 @@ import { syncMcpOnStartup } from './mcp-installer.js';
 import { startSessionCleanup } from './session-cleanup.js';
 import { syncSkillsOnStartup } from './skill-installer.js';
 import { startSchedulerLoop } from './task-scheduler.js';
+import {
+  ActiveCommandGrant,
+  createActiveCommandGrant,
+  isActiveCommandGrant,
+} from './task-provenance.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -91,11 +98,45 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+const activeCommandGrants = new Map<string, ActiveCommandGrant>();
+const activeInteractionIds = new Map<string, string>();
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
 const onecli = new OneCLI({ url: ONECLI_URL });
+
+function refreshCommandGrant(
+  group: RegisteredGroup,
+  messages: NewMessage[],
+): void {
+  const command = [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        !message.is_from_me &&
+        !message.is_bot_message &&
+        message.source_channel === 'slack',
+    );
+  if (!command) return;
+  try {
+    activeCommandGrants.set(
+      group.folder,
+      createActiveCommandGrant({
+        workspaceId: command.source_workspace_id || '',
+        chatJid: command.chat_jid,
+        userId: command.sender,
+        messageId: command.id,
+      }),
+    );
+  } catch (error) {
+    activeCommandGrants.delete(group.folder);
+    logger.warn(
+      { group: group.folder, error },
+      'Slack command could not receive task authorization provenance',
+    );
+  }
+}
 
 function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
   if (group.isMain) return;
@@ -315,6 +356,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
+  refreshCommandGrant(group, missedMessages);
+
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -394,6 +437,8 @@ async function runAgent(
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
+  const interactionId = randomUUID();
+  activeInteractionIds.set(group.folder, interactionId);
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -442,6 +487,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        interactionId,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -485,6 +531,9 @@ async function runAgent(
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
+  } finally {
+    activeInteractionIds.delete(group.folder);
+    activeCommandGrants.delete(group.folder);
   }
 }
 
@@ -582,6 +631,7 @@ async function startMessageLoop(): Promise<void> {
           }
 
           if (queue.sendMessage(chatJid, formatted)) {
+            refreshCommandGrant(group, messagesToSend);
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -995,6 +1045,17 @@ async function main(): Promise<void> {
       return channel.sendMessage(jid, text);
     },
     registeredGroups: () => registeredGroups,
+    getCommandGrant: (sourceGroup, interactionId) => {
+      if (
+        !interactionId ||
+        activeInteractionIds.get(sourceGroup) !== interactionId
+      ) {
+        return undefined;
+      }
+      const grant = activeCommandGrants.get(sourceGroup);
+      return isActiveCommandGrant(grant) ? grant : undefined;
+    },
+    taskProvenanceSecret: TASK_PROVENANCE_SECRET,
     registerGroup,
     syncGroups: async (force: boolean) => {
       await Promise.all(

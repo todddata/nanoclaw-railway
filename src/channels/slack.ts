@@ -34,6 +34,7 @@ export class SlackChannel implements Channel {
   private app: App;
   private botUserId: string | undefined;
   private botId: string | undefined;
+  private teamId: string | undefined;
   private connected = false;
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
@@ -150,6 +151,7 @@ export class SlackChannel implements Channel {
         is_from_me: isOwnBotMessage,
         is_bot_message: isBotMessage,
         source_channel: 'slack',
+        source_workspace_id: this.teamId,
         thread_id: threadId,
       });
     });
@@ -165,6 +167,7 @@ export class SlackChannel implements Channel {
       const auth = await this.app.client.auth.test();
       this.botUserId = auth.user_id as string;
       this.botId = auth.bot_id as string;
+      this.teamId = auth.team_id as string;
       logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
     } catch (err) {
       logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');

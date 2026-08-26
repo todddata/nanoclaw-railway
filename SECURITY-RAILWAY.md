@@ -5,10 +5,13 @@ This fork deploys NanoClaw as a Slack-only personal assistant on Railway. Railwa
 ## Enforced controls
 
 - Slack messages are accepted only from the configured sender allowlist, before commands or storage.
+- Every inbound record carries provider provenance. Railway rejects anything whose actual source is not Slack before it reaches command handling, task scheduling, or message storage. Routing email content to a Slack conversation does not grant it Slack authority.
 - Main and non-main conversations require the configured `@NanoClaw` trigger.
 - The Railway agent tool profile excludes Bash, subagents, arbitrary MCP servers, skill installation, notebook execution, and remote control.
 - Read/search tools are limited to the assigned group, global, and explicit extra workspaces. Writes are limited to the assigned group. Canonical-path checks reject traversal and symlink escapes.
 - Scheduled shell scripts and cross-channel `send_message` targets are disabled.
+- Task creation and mutation require a live, per-interaction authorization derived from an allowlisted Slack message. The interaction nonce is removed when that agent session ends.
+- Scheduled jobs store a host-signed record binding the Slack workspace, channel, owner user, originating message, exact prompt, schedule, destination, and a 30-day execution expiry. Missing, changed, expired, or legacy unsigned jobs are paused before execution. Scheduled agents cannot create or mutate jobs.
 - The agent child receives no Railway service secrets. Anthropic requests use a credential-injecting proxy bound to `127.0.0.1`.
 - `/app` and `/agent-runner-dist` are root-owned and read-only at runtime. Persistent state under `/data` is writable by the service account.
 - Only Slack production dependencies are installed in the final image. Root, runtime, and agent lockfiles are reproducible with `npm ci`; the base image is digest-pinned.
@@ -34,3 +37,5 @@ The SQLite message database is not automatically purged. Back it up before schem
 ## Remaining architectural limitation
 
 The host orchestrator and agent child still share one Railway service container and Unix account. Tool restrictions and read-only application files substantially reduce reach, but they are not equivalent to a kernel-enforced sandbox. Do not attach high-impact credentials or confidential client data until the agent is moved to a separate sandbox worker or microVM with explicit mounts and network policy.
+
+Email access is not enabled in the NanoClaw service. The separate `mail-broker` is currently credential-free staging code only. Mailbox OAuth must remain broker-only, and a provider adapter must pass the adversarial suite before a pilot mailbox is connected.
