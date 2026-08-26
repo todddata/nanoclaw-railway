@@ -333,7 +333,9 @@ export class SlackChannel implements Channel {
 
       do {
         const result = await this.app.client.conversations.list({
-          types: 'public_channel,private_channel',
+          // This deployment's command plane is a private Slack channel. Do not
+          // request or enumerate public channels or direct messages.
+          types: 'private_channel',
           exclude_archived: true,
           limit: 200,
           cursor,

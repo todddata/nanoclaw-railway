@@ -21,6 +21,18 @@ Agents execute in containers (lightweight Linux VMs), providing:
 
 This is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
 
+#### Railway deployment boundary
+
+The generic container model above applies when NanoClaw launches a separate
+Docker/Apple Container for each agent. Railway does not permit nested container
+or user-namespace creation in the deployed service. The current Railway build
+therefore runs the restricted agent as a separate non-shell child process in the
+same service container. Its application controls deny Bash, arbitrary MCP
+servers, mailbox credentials, and host service secrets, but this is **not an
+OS-level sandbox boundary**. Treat the Railway deployment as suitable for the
+bounded Slack/MailBroker workflow only until the agent runner is moved to a
+separate Railway service or another sandbox-capable worker.
+
 ### 2. Mount Security
 
 **External Allowlist** - Mount permissions stored at `~/.config/nanoclaw/mount-allowlist.json`, which is:
