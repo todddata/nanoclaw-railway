@@ -21,7 +21,7 @@ import {
   TASK_PROVENANCE_SECRET,
   TIMEZONE,
 } from './config.js';
-import { validateCommandSource } from './command-source.js';
+import { isCommandPlaneChat, validateCommandSource } from './command-source.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -44,6 +44,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   deleteSession,
+  deleteRegisteredGroup,
   getAllTasks,
   getLastBotMessageTimestamp,
   getMessagesSince,
@@ -169,6 +170,27 @@ function loadState(): void {
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
 
+  const commandPolicy = {
+    allowedChannel: COMMAND_CHANNEL,
+    allowedChatJid: SLACK_MAIN_CHANNEL_ID
+      ? `slack:${SLACK_MAIN_CHANNEL_ID}`
+      : undefined,
+  };
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (!isCommandPlaneChat(jid, commandPolicy)) {
+      delete registeredGroups[jid];
+      delete lastAgentTimestamp[jid];
+      delete sessions[group.folder];
+      deleteRegisteredGroup(jid);
+      deleteSession(group.folder);
+      logger.warn(
+        { jid, folder: group.folder },
+        'Pruned conversation outside the configured command plane',
+      );
+    }
+  }
+  setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+
   // Existing main groups may retain the old default trigger after the
   // assistant is renamed. Keep the persisted trigger aligned when main-group
   // mention gating is enabled.
@@ -273,7 +295,17 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && c.is_group)
+    .filter(
+      (c) =>
+        c.jid !== '__group_sync__' &&
+        c.is_group &&
+        isCommandPlaneChat(c.jid, {
+          allowedChannel: COMMAND_CHANNEL,
+          allowedChatJid: SLACK_MAIN_CHANNEL_ID
+            ? `slack:${SLACK_MAIN_CHANNEL_ID}`
+            : undefined,
+        }),
+    )
     .map((c) => ({
       jid: c.jid,
       name: c.name,
@@ -862,7 +894,16 @@ async function main(): Promise<void> {
 
       // Slack calls this before it checks registeredGroups(), allowing the
       // first authorized @NanoClaw message in a new channel or DM to work.
-      if (channel === 'slack' && !registeredGroups[chatJid]) {
+      if (
+        channel === 'slack' &&
+        isCommandPlaneChat(chatJid, {
+          allowedChannel: COMMAND_CHANNEL,
+          allowedChatJid: SLACK_MAIN_CHANNEL_ID
+            ? `slack:${SLACK_MAIN_CHANNEL_ID}`
+            : undefined,
+        }) &&
+        !registeredGroups[chatJid]
+      ) {
         const channelId = chatJid.replace(/^slack:/, '');
         const displayName =
           name || (isGroup ? `slack-${channelId}` : `dm-${channelId}`);
@@ -995,7 +1036,17 @@ async function main(): Promise<void> {
     );
     const allChats = getAllChats();
     for (const chat of allChats) {
-      if (!registeredGroups[chat.jid] && chat.is_group && chat.name) {
+      if (
+        !registeredGroups[chat.jid] &&
+        chat.is_group &&
+        chat.name &&
+        isCommandPlaneChat(chat.jid, {
+          allowedChannel: COMMAND_CHANNEL,
+          allowedChatJid: SLACK_MAIN_CHANNEL_ID
+            ? `slack:${SLACK_MAIN_CHANNEL_ID}`
+            : undefined,
+        })
+      ) {
         // Derive channel prefix for folder name (slack, tg, dc, wa)
         let prefix: string;
         if (chat.jid.startsWith('slack:')) prefix = 'slack';

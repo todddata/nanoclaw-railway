@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateCommandSource } from './command-source.js';
+import { isCommandPlaneChat, validateCommandSource } from './command-source.js';
 import { NewMessage } from './types.js';
 
 function message(overrides: Partial<NewMessage> = {}): NewMessage {
@@ -82,5 +82,15 @@ describe('validateCommandSource', () => {
         { allowedChannel: '' },
       ),
     ).toEqual({ allowed: true });
+  });
+
+  it('identifies only the configured control conversation for persisted routing state', () => {
+    const policy = {
+      allowedChannel: 'slack',
+      allowedChatJid: 'slack:C_CONTROL',
+    };
+    expect(isCommandPlaneChat('slack:C_CONTROL', policy)).toBe(true);
+    expect(isCommandPlaneChat('slack:C_OTHER', policy)).toBe(false);
+    expect(isCommandPlaneChat('gmail:thread', policy)).toBe(false);
   });
 });
