@@ -569,6 +569,12 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
             NANOCLAW_RESTRICTED_RUNTIME: restrictedRuntime ? '1' : '0',
             NANOCLAW_INTERACTION_ID: containerInput.interactionId || '',
+            // Railway runs the agent as a child process and assigns each
+            // group an IPC directory on the persistent /data volume. Pass
+            // that path through to the MCP subprocess; otherwise it falls
+            // back to the container-only /workspace/ipc path.
+            NANOCLAW_IPC_DIR:
+              process.env.NANOCLAW_IPC_DIR || '/workspace/ipc',
           },
         },
         ...extraMcpServers,
