@@ -68,9 +68,14 @@ All channels are pre-installed. Set the relevant env vars in Railway and restart
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) and create a new app (from scratch)
 2. **Socket Mode** - enable it, generate an App-Level Token (`xapp-...`) with scope `connections:write`
-3. **Event Subscriptions** - enable and subscribe to bot events: `message.channels`, `message.groups`, `message.im`
-4. **OAuth & Permissions** - add scopes: `chat:write`, `channels:history`, `groups:history`, `im:history`, `channels:read`, `groups:read`, `users:read`
+3. **Event Subscriptions** - enable only the `message.groups` bot event for a private command channel
+4. **OAuth & Permissions** - add only `chat:write`, `groups:history`, `groups:read`, and `users:read`
 5. **Install to Workspace** - copy the Bot User OAuth Token (`xoxb-...`)
+
+The private-channel deployment must not request `channels:history`,
+`channels:read`, or `im:history`. NanoClaw will not receive public-channel or
+direct-message events. `users:read` is retained only to resolve a Slack user ID
+to a display name; authorization always uses the immutable Slack user ID.
 
 **Setting the main channel:**
 

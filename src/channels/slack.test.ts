@@ -781,6 +781,9 @@ describe('SlackChannel', () => {
       await channel.connect();
 
       // connect() calls syncChannelMetadata internally
+      expect(currentApp().client.conversations.list).toHaveBeenCalledWith(
+        expect.objectContaining({ types: 'private_channel' }),
+      );
       expect(updateChatName).toHaveBeenCalledWith('slack:C001', 'general');
       expect(updateChatName).toHaveBeenCalledWith('slack:C002', 'random');
       // Non-member channels are skipped

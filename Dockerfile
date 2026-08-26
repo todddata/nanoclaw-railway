@@ -30,13 +30,15 @@ RUN npm ci --omit=dev
 # Stage 4: Final image
 FROM node:22-slim@sha256:4d676821dff059fd00d277ee4261ef34ea712317fed0737c03941481b5760c96
 
-# The restricted Railway runtime does not ship a browser or arbitrary shell
-# tooling. Git is retained for host-managed skill synchronization.
+# The restricted Railway runtime does not ship a browser, package manager,
+# source-control client, or network CLI. Railway skill synchronization is
+# disabled; all runtime code and dependencies are immutable image contents.
 RUN apt-get update && apt-get install -y \
-    curl \
-    git \
     gosu \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    /usr/local/lib/node_modules/npm \
+    /usr/local/bin/npm \
+    /usr/local/bin/npx
 
 # Copy agent-runner build output
 COPY --from=agent-builder /build/agent-runner/dist /agent-runner-dist

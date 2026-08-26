@@ -44,6 +44,19 @@ jobs:
         working-directory: mail-broker
         run: npm ci && npm run typecheck && npm test && npm audit --omit=dev --audit-level=high
 
+      - name: Build production container image
+        run: docker build --tag nanoclaw:${{ github.sha }} .
+
+      - name: Scan production container image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nanoclaw:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
       - name: Scan repository for committed secrets
         uses: gitleaks/gitleaks-action@v2
         env:
