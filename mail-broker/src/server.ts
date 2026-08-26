@@ -1,7 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 
-import { verifyCapability } from './capability.js';
-import { authorizeAction, parseActionRequest } from './policy.js';
+import { BrokerEngine, BrokerError } from './broker.js';
 
 const MAX_BODY_BYTES = 128 * 1024;
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -9,9 +8,11 @@ const secret = process.env.MAIL_BROKER_CAPABILITY_SECRET || '';
 const mode = process.env.MAIL_BROKER_MODE || 'disabled';
 const allowedSlackUser = process.env.MAIL_BROKER_SLACK_USER_ID || '';
 const allowedSlackChannel = process.env.MAIL_BROKER_SLACK_CHANNEL_ID || '';
-
-const actionCounts = new Map<string, number>();
-const idempotencyResults = new Map<string, unknown>();
+const killSwitch = process.env.MAIL_BROKER_KILL_SWITCH === 'true';
+const revokedGrantIds = (process.env.MAIL_BROKER_REVOKED_GRANT_IDS || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
@@ -40,10 +41,20 @@ function audit(event: Record<string, unknown>): void {
   );
 }
 
+const broker = new BrokerEngine({
+  secret,
+  allowedSlackUser,
+  allowedSlackChannel,
+  killSwitch,
+  revokedGrantIds,
+  audit,
+});
+
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/health') {
-    return json(response, mode === 'disabled' ? 503 : 200, {
-      ok: mode !== 'disabled',
+    const available = mode === 'mock' && !killSwitch;
+    return json(response, available ? 200 : 503, {
+      ok: available,
       mode,
     });
   }
@@ -54,62 +65,22 @@ const server = createServer(async (request, response) => {
   if (mode !== 'mock') {
     return json(response, 503, { error: 'broker_disabled' });
   }
-  if (!secret || !allowedSlackUser || !allowedSlackChannel) {
-    return json(response, 503, { error: 'broker_not_configured' });
-  }
-
   try {
-    const action = parseActionRequest(await readJson(request));
-    const capability = verifyCapability(action.capability, secret);
-    authorizeAction(action, capability);
-
-    if (
-      capability.source.userId !== allowedSlackUser ||
-      capability.source.channelId !== allowedSlackChannel
-    ) {
-      throw new Error('Slack source is outside broker policy');
-    }
-
-    const existing = idempotencyResults.get(action.idempotencyKey);
-    if (existing) return json(response, 200, existing);
-
-    const actionCount = actionCounts.get(capability.grantId) || 0;
-    const requestedActions = Math.max(1, action.messageIds?.length || 0);
-    if (actionCount + requestedActions > capability.maxActions) {
-      throw new Error('Capability action limit exceeded');
-    }
-    actionCounts.set(capability.grantId, actionCount + requestedActions);
-
-    // Credential-free staging deliberately records the authorized intent only.
-    // Provider adapters are added behind this same policy boundary.
-    const result = {
-      ok: true,
-      mode: 'mock',
-      operation: action.operation,
-      affected: action.messageIds?.length || 0,
-      grantId: capability.grantId,
-    };
-    idempotencyResults.set(action.idempotencyKey, result);
-    audit({
-      event: 'mail_action_authorized',
-      grantId: capability.grantId,
-      taskId: capability.source.taskId,
-      userId: capability.source.userId,
-      mailboxId: action.mailboxId,
-      operation: action.operation,
-      reasonCode: action.reasonCode,
-      affected: result.affected,
-    });
-    return json(response, 200, result);
+    return json(response, 200, broker.execute(await readJson(request)));
   } catch (error) {
-    audit({
-      event: 'mail_action_rejected',
-      error: error instanceof Error ? error.message : 'unknown_error',
+    const brokerError = error instanceof BrokerError ? error : undefined;
+    if (!brokerError) {
+      audit({
+        event: 'mail_action_rejected',
+        error: error instanceof Error ? error.message : 'unknown_error',
+      });
+    }
+    return json(response, brokerError?.status || 403, {
+      error: brokerError?.code || 'request_rejected',
     });
-    return json(response, 403, { error: 'request_rejected' });
   }
 });
 
 server.listen(port, '0.0.0.0', () => {
-  audit({ event: 'mail_broker_started', mode, port });
+  audit({ event: 'mail_broker_started', mode, killSwitch, port });
 });

@@ -42,6 +42,23 @@ export interface BrokerActionRequest {
   idempotencyKey: string;
 }
 
+export interface BrokerActionResult {
+  ok: true;
+  mode: 'mock';
+  operation: AllowedOperation;
+  affected: number;
+  grantId: string;
+  messages?: MockMessageView[];
+}
+
+export interface MockMessageView {
+  provider: MailProvider;
+  mailboxId: string;
+  messageId: string;
+  labels: string[];
+  location: 'inbox' | 'trash' | 'deleted';
+}
+
 export interface UntrustedEmailInput {
   provider: MailProvider;
   mailboxId: string;
