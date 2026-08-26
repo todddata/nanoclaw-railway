@@ -11,8 +11,11 @@ import {
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
+  HEALTH_PORT,
   IDLE_TIMEOUT,
   IS_RAILWAY,
+  MAIL_BROKER_URL,
+  MAIL_CLEANUP_ENABLED,
   MAX_MESSAGES_PER_PROMPT,
   ONECLI_URL,
   POLL_INTERVAL,
@@ -61,6 +64,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import { startHealthServer } from './health.js';
 import { startIpcWatcher } from './ipc.js';
 import {
   findChannel,
@@ -81,6 +85,7 @@ import {
 } from './sender-allowlist.js';
 import { syncMcpOnStartup } from './mcp-installer.js';
 import { startSessionCleanup } from './session-cleanup.js';
+import { restrictedAgentPolicyFingerprint } from './session-policy.js';
 import { syncSkillsOnStartup } from './skill-installer.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import {
@@ -169,6 +174,29 @@ function loadState(): void {
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
+
+  if (IS_RAILWAY) {
+    const policyFingerprint = restrictedAgentPolicyFingerprint({
+      mailCleanupEnabled: MAIL_CLEANUP_ENABLED,
+      mailboxId: process.env.MAIL_PILOT_MAILBOX_ID,
+      provider: process.env.MAIL_PILOT_PROVIDER,
+    });
+    if (
+      getRouterState('restricted_agent_policy_fingerprint') !==
+      policyFingerprint
+    ) {
+      const resetCount = Object.keys(sessions).length;
+      for (const groupFolder of Object.keys(sessions)) {
+        deleteSession(groupFolder);
+      }
+      sessions = {};
+      setRouterState('restricted_agent_policy_fingerprint', policyFingerprint);
+      logger.info(
+        { resetCount },
+        'Reset resumable sessions after restricted capability policy change',
+      );
+    }
+  }
 
   const commandPolicy = {
     allowedChannel: COMMAND_CHANNEL,
@@ -761,6 +789,7 @@ async function main(): Promise<void> {
 
   // Start credential proxy (containers/child processes route API calls through this)
   let proxyServer: { close: () => void } | undefined;
+  let healthServer: { close: () => void } | undefined;
   proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
     PROXY_BIND_HOST,
@@ -769,6 +798,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    healthServer?.close();
     proxyServer?.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
@@ -1141,6 +1171,17 @@ async function main(): Promise<void> {
   startSessionCleanup();
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
+  if (IS_RAILWAY) {
+    healthServer = await startHealthServer(
+      {
+        channels,
+        mailBrokerEnabled: MAIL_CLEANUP_ENABLED,
+        mailBrokerUrl: MAIL_BROKER_URL,
+      },
+      HEALTH_PORT,
+    );
+    logger.info({ port: HEALTH_PORT }, 'Deployment health server started');
+  }
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
