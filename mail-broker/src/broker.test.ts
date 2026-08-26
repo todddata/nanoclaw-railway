@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { BrokerEngine } from './broker.js';
+import { brokerHealth, BrokerEngine } from './broker.js';
 import { issueCapability } from './capability.js';
 import { MockMailboxAdapter } from './mock-adapter.js';
 import {
@@ -267,4 +267,15 @@ test('kill switch rejects every action before any side effect', () => {
   );
   assert.equal(adapter.calls, 0);
   assert.equal(adapter.snapshot()[0]?.location, 'inbox');
+});
+
+test('kill switch preserves liveness while advertising actions disabled', () => {
+  assert.deepEqual(brokerHealth('mock', true), {
+    status: 200,
+    body: { ok: true, mode: 'mock', actionsEnabled: false },
+  });
+  assert.deepEqual(brokerHealth('disabled', false), {
+    status: 503,
+    body: { ok: false, mode: 'disabled', actionsEnabled: false },
+  });
 });

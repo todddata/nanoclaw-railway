@@ -24,6 +24,18 @@ export class BrokerError extends Error {
   }
 }
 
+export function brokerHealth(mode: string, killSwitch: boolean) {
+  const configuredMode = mode === 'mock';
+  return {
+    status: configuredMode ? 200 : 503,
+    body: {
+      ok: configuredMode,
+      mode,
+      actionsEnabled: configuredMode && !killSwitch,
+    },
+  };
+}
+
 export class BrokerEngine {
   private readonly actionCounts = new Map<string, number>();
   private readonly idempotencyResults = new Map<string, BrokerActionResult>();
