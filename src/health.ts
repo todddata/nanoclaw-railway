@@ -10,7 +10,10 @@ interface MailBrokerHealth {
 
 export interface HealthDependencies {
   channels: readonly Channel[];
+  agentCredentialConfigured: boolean;
+  controlPlaneConfigured: boolean;
   mailBrokerEnabled: boolean;
+  mailPilotConfigured: boolean;
   mailBrokerUrl: string;
   fetchImpl?: typeof fetch;
 }
@@ -19,6 +22,9 @@ export interface HealthResult {
   ok: boolean;
   components: {
     slack: 'ok' | 'unavailable';
+    agentCredential: 'ok' | 'unavailable';
+    controlPlane: 'ok' | 'unavailable';
+    mailPilot: 'ok' | 'disabled' | 'unavailable';
     mailBroker: 'ok' | 'disabled' | 'unavailable';
   };
 }
@@ -30,6 +36,12 @@ export async function evaluateHealth(
     (channel) => channel.name === 'slack' && channel.isConnected(),
   );
   let mailBroker: HealthResult['components']['mailBroker'] = 'disabled';
+  const mailPilot: HealthResult['components']['mailPilot'] =
+    dependencies.mailBrokerEnabled
+      ? dependencies.mailPilotConfigured
+        ? 'ok'
+        : 'unavailable'
+      : 'disabled';
 
   if (dependencies.mailBrokerEnabled) {
     if (!dependencies.mailBrokerUrl) {
@@ -55,9 +67,19 @@ export async function evaluateHealth(
   }
 
   return {
-    ok: slackConnected && mailBroker !== 'unavailable',
+    ok:
+      slackConnected &&
+      dependencies.agentCredentialConfigured &&
+      dependencies.controlPlaneConfigured &&
+      mailPilot !== 'unavailable' &&
+      mailBroker !== 'unavailable',
     components: {
       slack: slackConnected ? 'ok' : 'unavailable',
+      agentCredential: dependencies.agentCredentialConfigured
+        ? 'ok'
+        : 'unavailable',
+      controlPlane: dependencies.controlPlaneConfigured ? 'ok' : 'unavailable',
+      mailPilot,
       mailBroker,
     },
   };

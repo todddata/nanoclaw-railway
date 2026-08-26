@@ -36,7 +36,10 @@ import {
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
-import { startCredentialProxy } from './credential-proxy.js';
+import {
+  hasCredentialProxyCredential,
+  startCredentialProxy,
+} from './credential-proxy.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
@@ -79,6 +82,7 @@ import {
 } from './remote-control.js';
 import {
   isSenderAllowed,
+  isOwnerOnlyDropMode,
   isTriggerAllowed,
   loadSenderAllowlist,
   shouldDropMessage,
@@ -1175,7 +1179,20 @@ async function main(): Promise<void> {
     healthServer = await startHealthServer(
       {
         channels,
+        agentCredentialConfigured: hasCredentialProxyCredential(),
+        controlPlaneConfigured:
+          !!SLACK_MAIN_CHANNEL_ID &&
+          !!registeredGroups[`slack:${SLACK_MAIN_CHANNEL_ID}`] &&
+          TASK_PROVENANCE_SECRET.length >= 32 &&
+          isOwnerOnlyDropMode(
+            `slack:${SLACK_MAIN_CHANNEL_ID}`,
+            loadSenderAllowlist(),
+          ),
         mailBrokerEnabled: MAIL_CLEANUP_ENABLED,
+        mailPilotConfigured:
+          !!process.env.MAIL_PILOT_MAILBOX_ID &&
+          (process.env.MAIL_PILOT_PROVIDER === 'gmail' ||
+            process.env.MAIL_PILOT_PROVIDER === 'microsoft'),
         mailBrokerUrl: MAIL_BROKER_URL,
       },
       HEALTH_PORT,
