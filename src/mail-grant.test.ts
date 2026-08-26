@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createSignedMailGrantRequest,
   exchangeMailGrant,
+  executeMailAction,
 } from './mail-grant.js';
 import { ScheduledTaskProvenance } from './task-provenance.js';
 
@@ -67,7 +68,7 @@ describe('host mail grant exchange', () => {
       secret,
     );
     const fetchMock = vi.fn(
-      async () =>
+      async (_input: string | URL | Request) =>
         new Response(
           JSON.stringify({
             capability: 'opaque-capability',
@@ -87,6 +88,53 @@ describe('host mail grant exchange', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     await expect(
       exchangeMailGrant('https://evil.example', signed, fetchMock),
+    ).rejects.toThrow(/private networking/);
+  });
+
+  it('executes only the fixed private action endpoint and validates results', async () => {
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request) =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            operation: 'messages.list',
+            affected: 0,
+            grantId: 'grant-1',
+            records: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    await expect(
+      executeMailAction(
+        'http://mailbroker.railway.internal:8080',
+        {
+          capability: 'opaque-capability',
+          operation: 'messages.list',
+          provider: 'gmail',
+          mailboxId: 'pilot@example.com',
+          reasonCode: 'scheduled.provider_spam_scan',
+          idempotencyKey: 'scan:test-run-1',
+        },
+        fetchMock,
+      ),
+    ).resolves.toMatchObject({ ok: true, affected: 0 });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'http://mailbroker.railway.internal:8080/v1/actions',
+    );
+    await expect(
+      executeMailAction(
+        'http://127.0.0.1:3000',
+        {
+          capability: 'opaque-capability',
+          operation: 'messages.list',
+          provider: 'gmail',
+          mailboxId: 'pilot@example.com',
+          reasonCode: 'scheduled.provider_spam_scan',
+          idempotencyKey: 'scan:test-run-1',
+        },
+        fetchMock,
+      ),
     ).rejects.toThrow(/private networking/);
   });
 });

@@ -11,6 +11,34 @@ export type MailGrantOperation =
   | 'messages.move_deleted'
   | 'messages.restore';
 
+export interface MailBrokerActionRequest {
+  capability: string;
+  operation: MailGrantOperation;
+  provider: 'gmail' | 'microsoft';
+  mailboxId: string;
+  messageIds?: string[];
+  addLabels?: string[];
+  removeLabels?: string[];
+  reasonCode: string;
+  idempotencyKey: string;
+}
+
+export interface InertMailRecord {
+  trust: 'untrusted-email-data';
+  provider: 'gmail' | 'microsoft';
+  mailboxId: string;
+  messageId: string;
+  providerSpam: boolean;
+}
+
+export interface MailBrokerActionResult {
+  ok: true;
+  operation: MailGrantOperation;
+  affected: number;
+  grantId: string;
+  records?: InertMailRecord[];
+}
+
 export interface HostMailGrantScope {
   provider: 'gmail' | 'microsoft';
   mailboxId: string;
@@ -71,10 +99,7 @@ export async function exchangeMailGrant(
   signedRequest: ReturnType<typeof createSignedMailGrantRequest>,
   fetchImplementation: typeof fetch = fetch,
 ): Promise<{ capability: string; grantId: string; expiresAt: string }> {
-  const url = new URL('/v1/grants/exchange', brokerUrl);
-  if (url.protocol !== 'http:' || !url.hostname.endsWith('.railway.internal')) {
-    throw new Error('Mail broker URL must use Railway private networking');
-  }
+  const url = privateBrokerUrl(brokerUrl, '/v1/grants/exchange');
   const response = await fetchImplementation(url, {
     method: 'POST',
     redirect: 'error',
@@ -100,4 +125,48 @@ export async function exchangeMailGrant(
     grantId: string;
     expiresAt: string;
   };
+}
+
+function privateBrokerUrl(brokerUrl: string, path: string): URL {
+  const url = new URL(path, brokerUrl);
+  if (
+    url.protocol !== 'http:' ||
+    !url.hostname.toLowerCase().endsWith('.railway.internal')
+  ) {
+    throw new Error('Mail broker URL must use Railway private networking');
+  }
+  return url;
+}
+
+export async function executeMailAction(
+  brokerUrl: string,
+  action: MailBrokerActionRequest,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<MailBrokerActionResult> {
+  const response = await fetchImplementation(
+    privateBrokerUrl(brokerUrl, '/v1/actions'),
+    {
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(action),
+    },
+  );
+  if (response.status !== 200) {
+    throw new Error(`Mail action rejected with status ${response.status}`);
+  }
+  const result = (await response.json()) as Record<string, unknown>;
+  if (
+    result.ok !== true ||
+    typeof result.operation !== 'string' ||
+    typeof result.affected !== 'number' ||
+    !Number.isSafeInteger(result.affected) ||
+    result.affected < 0 ||
+    typeof result.grantId !== 'string' ||
+    (result.records !== undefined && !Array.isArray(result.records))
+  ) {
+    throw new Error('Mail action returned an invalid response');
+  }
+  return result as unknown as MailBrokerActionResult;
 }

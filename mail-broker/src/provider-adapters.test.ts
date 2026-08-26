@@ -91,6 +91,39 @@ test('Gmail reads sanitized inline text without fetching attachments', async () 
   ]);
 });
 
+test('Gmail list is pinned to the provider Spam label', async () => {
+  const calls: string[] = [];
+  const fetch: typeof globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith('/profile')) {
+      return Response.json({ emailAddress: 'pilot@example.com' });
+    }
+    if (url.includes('?maxResults=')) {
+      return Response.json({ messages: [{ id: 'spam-1' }] });
+    }
+    return Response.json({
+      id: 'spam-1',
+      sizeEstimate: 100,
+      labelIds: ['SPAM'],
+      payload: { mimeType: 'text/plain', body: { data: '' } },
+    });
+  };
+  const adapter = new GmailAdapter({
+    mailboxId: 'pilot@example.com',
+    tokenSource,
+    fetch,
+  });
+  const result = await adapter.execute(
+    action('messages.list', 'gmail', 'pilot@example.com', []),
+  );
+  assert.equal(
+    calls[1],
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50&includeSpamTrash=true&labelIds=SPAM',
+  );
+  assert.equal(result.records?.[0]?.providerSpam, true);
+});
+
 test('Gmail exposes recoverable trash and untrash endpoints, never delete or send', async () => {
   const calls: Array<{ url: string; method: string }> = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -226,6 +259,38 @@ test('Microsoft delete and restore are fixed recoverable move operations', async
     calls.some(({ url }) => /send|reply|forward|\/delete/i.test(url)),
     false,
   );
+});
+
+test('Microsoft list is pinned to the well-known Junk Email folder', async () => {
+  const calls: string[] = [];
+  const adapter = new MicrosoftAdapter({
+    mailboxId: 'pilot@example.com',
+    tokenSource,
+    fetch: async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('?$select=mail,userPrincipalName')) {
+        return Response.json({ mail: 'pilot@example.com' });
+      }
+      return Response.json({
+        value: [
+          {
+            id: 'junk-1',
+            subject: 'junk',
+            body: { contentType: 'text', content: 'junk body' },
+          },
+        ],
+      });
+    },
+  });
+  const result = await adapter.execute(
+    action('messages.list', 'microsoft', 'pilot@example.com', []),
+  );
+  assert.equal(
+    calls[1],
+    'https://graph.microsoft.com/v1.0/me/mailFolders/junkemail/messages?$top=50&$select=id,subject,from,body,categories,hasAttachments',
+  );
+  assert.equal(result.records?.[0]?.providerSpam, true);
 });
 
 test('adapters reject provider and mailbox escalation before OAuth access', async () => {

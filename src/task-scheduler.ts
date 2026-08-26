@@ -4,6 +4,8 @@ import fs from 'fs';
 
 import {
   ASSISTANT_NAME,
+  MAIL_BROKER_URL,
+  MAIL_CLEANUP_ENABLED,
   SCHEDULER_POLL_INTERVAL,
   TASK_PROVENANCE_SECRET,
   TIMEZONE,
@@ -24,7 +26,16 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { verifyScheduledTask } from './task-provenance.js';
+import {
+  MailCleanupRunOptions,
+  MailCleanupResult,
+  parseMailCleanupScript,
+  runMailCleanup,
+} from './mail-cleanup.js';
+import {
+  ScheduledTaskProvenance,
+  verifyScheduledTask,
+} from './task-provenance.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -79,6 +90,12 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+  taskProvenanceSecret?: string;
+  mailBrokerUrl?: string;
+  mailCleanupEnabled?: boolean;
+  runMailCleanup?: (
+    options: MailCleanupRunOptions,
+  ) => Promise<MailCleanupResult>;
 }
 
 async function runTask(
@@ -86,14 +103,37 @@ async function runTask(
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
+  const taskProvenanceSecret =
+    deps.taskProvenanceSecret ?? TASK_PROVENANCE_SECRET;
+  let provenance: ScheduledTaskProvenance;
   try {
-    verifyScheduledTask(task, TASK_PROVENANCE_SECRET);
+    provenance = verifyScheduledTask(task, taskProvenanceSecret);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     updateTask(task.id, { status: 'paused' });
     logger.error(
       { taskId: task.id, error },
       'Scheduled task blocked by provenance policy',
+    );
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: 'error',
+      result: null,
+      error,
+    });
+    return;
+  }
+  let mailCleanupConfig;
+  try {
+    mailCleanupConfig = parseMailCleanupScript(task.script);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    updateTask(task.id, { status: 'paused' });
+    logger.error(
+      { taskId: task.id, error },
+      'Invalid mail cleanup task paused',
     );
     logTaskRun({
       task_id: task.id,
@@ -151,6 +191,50 @@ async function runTask(
       result: null,
       error: `Group not found: ${task.group_folder}`,
     });
+    return;
+  }
+
+  if (mailCleanupConfig) {
+    let result: string | null = null;
+    let error: string | null = null;
+    try {
+      const cleanup = await (deps.runMailCleanup || runMailCleanup)({
+        config: mailCleanupConfig,
+        enabled: deps.mailCleanupEnabled ?? MAIL_CLEANUP_ENABLED,
+        brokerUrl: deps.mailBrokerUrl ?? MAIL_BROKER_URL,
+        provenance,
+        taskId: task.id,
+        taskProvenanceSecret,
+      });
+      result = cleanup.summary;
+      await deps.sendMessage(task.chat_jid, cleanup.summary);
+      logger.info(
+        {
+          taskId: task.id,
+          scanned: cleanup.scanned,
+          providerSpamFound: cleanup.providerSpamFound,
+          movedToRecoverableTrash: cleanup.movedToRecoverableTrash,
+        },
+        'Host-controlled mail cleanup completed',
+      );
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      logger.error({ taskId: task.id, error }, 'Mail cleanup task failed');
+    }
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: error ? 'error' : 'success',
+      result,
+      error,
+    });
+    const nextRun = computeNextRun(task);
+    updateTaskAfterRun(
+      task.id,
+      nextRun,
+      error ? `Error: ${error}` : result?.slice(0, 200) || 'Completed',
+    );
     return;
   }
 
