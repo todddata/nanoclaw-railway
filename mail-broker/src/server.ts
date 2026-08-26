@@ -1,6 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 
-import { BrokerEngine, BrokerError } from './broker.js';
+import { brokerHealth, BrokerEngine, BrokerError } from './broker.js';
 
 const MAX_BODY_BYTES = 128 * 1024;
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -52,11 +52,8 @@ const broker = new BrokerEngine({
 
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/health') {
-    const available = mode === 'mock' && !killSwitch;
-    return json(response, available ? 200 : 503, {
-      ok: available,
-      mode,
-    });
+    const health = brokerHealth(mode, killSwitch);
+    return json(response, health.status, health.body);
   }
 
   if (request.method !== 'POST' || request.url !== '/v1/actions') {

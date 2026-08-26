@@ -36,8 +36,10 @@ Required staging variables:
 
 Optional safety controls:
 
-- `MAIL_BROKER_KILL_SWITCH=true` blocks every action and makes health return
-  `503`. Set it first during any suspected compromise.
+- `MAIL_BROKER_KILL_SWITCH=true` blocks every action with `503`. The health
+  endpoint remains live and reports `actionsEnabled: false`, so Railway can
+  activate the emergency deployment instead of retaining an older container.
+  Set it first during any suspected compromise.
 - `MAIL_BROKER_REVOKED_GRANT_IDS=grant-1,grant-2` denies named signed grants
   without rotating the service-wide signing secret.
 
