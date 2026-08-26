@@ -1,5 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 
+import { AppendOnlyAuditLog, MailAuditInput } from './audit-log.js';
 import { brokerHealth, BrokerEngine, BrokerError } from './broker.js';
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -13,6 +14,8 @@ const revokedGrantIds = (process.env.MAIL_BROKER_REVOKED_GRANT_IDS || '')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
+const auditPath = process.env.MAIL_BROKER_AUDIT_PATH || '';
+const auditLog = auditPath ? new AppendOnlyAuditLog(auditPath) : undefined;
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
@@ -36,6 +39,15 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 }
 
 function audit(event: Record<string, unknown>): void {
+  if (
+    auditLog &&
+    (event.event === 'mail_action_authorized' ||
+      event.event === 'mail_action_completed' ||
+      event.event === 'mail_action_rejected' ||
+      event.event === 'mail_security_alert')
+  ) {
+    auditLog.append(event as unknown as MailAuditInput);
+  }
   process.stdout.write(
     `${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`,
   );
@@ -48,12 +60,21 @@ const broker = new BrokerEngine({
   killSwitch,
   revokedGrantIds,
   audit,
+  policyVersion: process.env.MAIL_BROKER_POLICY_VERSION || 'mail-policy-v1',
+  modelVersion: process.env.MAIL_BROKER_MODEL_VERSION || 'none',
+  denialAlertThreshold: Number.parseInt(
+    process.env.MAIL_BROKER_DENIAL_ALERT_THRESHOLD || '5',
+    10,
+  ),
 });
 
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/health') {
     const health = brokerHealth(mode, killSwitch);
-    return json(response, health.status, health.body);
+    return json(response, health.status, {
+      ...health.body,
+      auditPersistent: !!auditLog,
+    });
   }
 
   if (request.method !== 'POST' || request.url !== '/v1/actions') {

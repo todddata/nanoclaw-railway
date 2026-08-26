@@ -279,3 +279,79 @@ test('kill switch preserves liveness while advertising actions disabled', () => 
     body: { ok: false, mode: 'disabled', actionsEnabled: false },
   });
 });
+
+test('emits complete action audit fields and a repeated-denial alert', () => {
+  const events: Record<string, unknown>[] = [];
+  const broker = new BrokerEngine({
+    secret,
+    allowedSlackUser: 'U123',
+    allowedSlackChannel: 'C123',
+    adapter: new MockMailboxAdapter([gmailMessage]),
+    now: () => now,
+    denialAlertThreshold: 2,
+    policyVersion: 'policy-test',
+    modelVersion: 'classifier-test',
+    audit: (event) => events.push(event),
+  });
+  const token = capability(['messages.trash']);
+  broker.execute(
+    request(
+      token,
+      'messages.trash',
+      'gmail',
+      'personal@example.com',
+      'gmail-1',
+      'audit-trash-001',
+    ),
+  );
+  assert.deepEqual(events[0], {
+    event: 'mail_action_authorized',
+    grantId: 'grant-1',
+    taskId: 'task-1',
+    userId: 'U123',
+    mailboxId: 'personal@example.com',
+    operation: 'messages.trash',
+    reasonCode: 'test.authorized',
+    messageRefs: ['gmail-1'],
+    policyVersion: 'policy-test',
+    modelVersion: 'classifier-test',
+    outcome: 'authorized',
+    affected: 1,
+  });
+  assert.equal(events[1]?.event, 'mail_action_completed');
+  assert.equal(events[1]?.outcome, 'completed');
+  assert.throws(() => broker.execute({}), /Invalid request/);
+  assert.throws(() => broker.execute({}), /Invalid request/);
+  assert.equal(events.at(-1)?.event, 'mail_security_alert');
+  assert.equal(events.at(-1)?.reasonCode, 'repeated_denials');
+});
+
+test('audit sink failure prevents mailbox mutation', () => {
+  const adapter = new MockMailboxAdapter([gmailMessage]);
+  const broker = new BrokerEngine({
+    secret,
+    allowedSlackUser: 'U123',
+    allowedSlackChannel: 'C123',
+    adapter,
+    now: () => now,
+    audit: () => {
+      throw new Error('audit storage unavailable');
+    },
+  });
+  const token = capability(['messages.trash']);
+  assert.throws(
+    () =>
+      broker.execute(
+        request(
+          token,
+          'messages.trash',
+          'gmail',
+          'personal@example.com',
+          'gmail-1',
+          'audit-failure-001',
+        ),
+      ),
+    /audit storage unavailable/,
+  );
+  assert.equal(adapter.snapshot()[0]?.location, 'inbox');
+});

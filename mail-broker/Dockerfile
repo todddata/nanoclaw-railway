@@ -14,6 +14,7 @@ WORKDIR /app
 COPY --from=build --chown=node:node /build/package.json /build/package-lock.json ./
 COPY --from=build --chown=node:node /build/node_modules ./node_modules
 COPY --from=build --chown=node:node /build/dist ./dist
+RUN mkdir -p /data && chown node:node /data
 
 USER node
 EXPOSE 3000

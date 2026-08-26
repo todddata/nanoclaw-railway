@@ -58,6 +58,22 @@ describe('validateCommandSource', () => {
     ).toBe(false);
   });
 
+  it('rejects a valid Slack message from any non-control channel', () => {
+    expect(
+      validateCommandSource(
+        'slack:C_OTHER',
+        message({ chat_jid: 'slack:C_OTHER' }),
+        {
+          allowedChannel: 'slack',
+          allowedChatJid: 'slack:C_CONTROL',
+        },
+      ),
+    ).toEqual({
+      allowed: false,
+      reason: 'Conversation is outside the configured command plane.',
+    });
+  });
+
   it('preserves unrestricted local deployments when no channel is configured', () => {
     expect(
       validateCommandSource(

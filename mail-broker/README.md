@@ -20,6 +20,14 @@ Email is always untrusted data; it is never accepted as a command source.
 - Model-only spam decisions quarantine for seven days. Provider spam or an
   explicit blocklist may move to recoverable trash. Sensitive or uncertain mail
   goes to review.
+- Email fields are normalized as explicitly untrusted data. Active HTML and
+  external links are removed; attachments, calendar parts, embedded messages,
+  and archives are quarantined without being opened.
+- Ingestion rejects more than 10 MiB raw input, 200 MIME parts, 12 levels of
+  nesting, 25 MiB expanded content, 10 encoding errors, 50 attachments, or 200
+  headers.
+- Mailbox intent is written to a hash-chained, mode-0600 journal before any
+  adapter mutation. A required audit-write failure prevents the action.
 
 ## Staging mode
 
@@ -33,6 +41,8 @@ Required staging variables:
 - `MAIL_BROKER_CAPABILITY_SECRET` (at least 32 random characters)
 - `MAIL_BROKER_SLACK_USER_ID`
 - `MAIL_BROKER_SLACK_CHANNEL_ID`
+- `MAIL_BROKER_AUDIT_PATH` (production: `/data/mail-audit.jsonl` on a dedicated
+  broker-only Railway volume)
 
 Optional safety controls:
 
@@ -42,6 +52,10 @@ Optional safety controls:
   Set it first during any suspected compromise.
 - `MAIL_BROKER_REVOKED_GRANT_IDS=grant-1,grant-2` denies named signed grants
   without rotating the service-wide signing secret.
+- `MAIL_BROKER_DENIAL_ALERT_THRESHOLD=5` emits a structured security alert after
+  repeated denials in a one-minute window.
+- `MAIL_BROKER_POLICY_VERSION` and `MAIL_BROKER_MODEL_VERSION` are copied into
+  audit events for traceability; message bodies and tokens are never journaled.
 
 Emergency sequence: enable the kill switch, revoke or rotate the affected
 credential, inspect the structured audit log, then redeploy with the kill switch
