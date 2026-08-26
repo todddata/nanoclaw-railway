@@ -24,6 +24,7 @@ export interface CapabilityPayload {
   grantId: string;
   source: SlackGrantSource;
   mailboxIds: string[];
+  providers: MailProvider[];
   messageIds: string[];
   operations: AllowedOperation[];
   issuedAt: string;

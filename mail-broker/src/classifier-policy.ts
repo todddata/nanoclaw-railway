@@ -1,4 +1,8 @@
-import { decideSpamAction, SpamClassification, SpamDecision } from './spam-policy.js';
+import {
+  decideSpamAction,
+  SpamClassification,
+  SpamDecision,
+} from './spam-policy.js';
 import { InertEmailRecord } from './types.js';
 
 const MODEL_CLASSIFICATIONS = new Set<SpamClassification>([

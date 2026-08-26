@@ -26,6 +26,10 @@ Email is always untrusted data; it is never accepted as a command source.
   are enforced outside the classifier.
 - Non-list capabilities bind exact message IDs as well as mailbox, operation,
   Slack provenance, expiry, and quota. A classifier cannot mint or widen them.
+- NanoClaw signs exact ten-minute grant requests with its scheduled-task
+  provenance key. The broker checks owner/channel/mailbox scope and durable
+  replay state, then issues the usable capability with a separate broker-only
+  signing key that NanoClaw and the model never receive.
 - Email fields are normalized as explicitly untrusted data. Active HTML and
   external links are removed; attachments, calendar parts, embedded messages,
   and archives are quarantined without being opened.
@@ -49,6 +53,9 @@ Required staging variables:
 - `MAIL_BROKER_SLACK_CHANNEL_ID`
 - `MAIL_BROKER_AUDIT_PATH` (production: `/data/mail-audit.jsonl` on a dedicated
   broker-only Railway volume)
+- `MAIL_BROKER_TASK_PROVENANCE_SECRET` (same host provenance verifier key; not
+  the broker capability-signing key)
+- `MAIL_BROKER_MAILBOX_IDS` (comma-separated explicit mailbox allowlist)
 
 Optional safety controls:
 

@@ -12,7 +12,8 @@ const MAX_EXPANDED_BYTES = 25 * 1024 * 1024;
 const MAX_ENCODING_ERRORS = 10;
 
 const EXTERNAL_LINK = /(?:https?|ftp):\/\/[^\s<>"']+|www\.[^\s<>"']+/gi;
-const ENCRYPTED_ARCHIVE = /(?:application\/(?:zip|x-7z-compressed|x-rar-compressed)|\.zip$|\.7z$|\.rar$)/i;
+const ENCRYPTED_ARCHIVE =
+  /(?:application\/(?:zip|x-7z-compressed|x-rar-compressed)|\.zip$|\.7z$|\.rar$)/i;
 
 function clean(value: string | undefined, maximum: number): string {
   return (value || '')
@@ -84,7 +85,10 @@ export function sanitizeEmail(input: UntrustedEmailInput): InertEmailRecord {
   const plain = clean(input.text, MAX_TEXT);
   const html = htmlToInertText(input.html);
   const quoted = clean(input.quotedText, MAX_TEXT);
-  const text = [plain || html, quoted ? `[untrusted-quoted-text]\n${quoted}` : '']
+  const text = [
+    plain || html,
+    quoted ? `[untrusted-quoted-text]\n${quoted}` : '',
+  ]
     .filter(Boolean)
     .join('\n')
     .slice(0, MAX_TEXT);

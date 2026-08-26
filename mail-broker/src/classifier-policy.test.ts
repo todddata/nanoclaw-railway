@@ -86,8 +86,12 @@ test('protects sensitive and allowlisted mail outside the model', () => {
 
 test('allows only provider spam or explicit blocklist to use recoverable trash', () => {
   assert.equal(
-    enforceSpamPolicy({ ...record, providerSpam: true }, highConfidence, policy, 0)
-      .action,
+    enforceSpamPolicy(
+      { ...record, providerSpam: true },
+      highConfidence,
+      policy,
+      0,
+    ).action,
     'trash',
   );
   assert.equal(
@@ -103,7 +107,13 @@ test('allows only provider spam or explicit blocklist to use recoverable trash',
 
 test('enforces mailbox, version, and run quota outside the model', () => {
   assert.throws(
-    () => enforceSpamPolicy({ ...record, mailboxId: 'other@example.com' }, highConfidence, policy, 0),
+    () =>
+      enforceSpamPolicy(
+        { ...record, mailboxId: 'other@example.com' },
+        highConfidence,
+        policy,
+        0,
+      ),
     /no matching/,
   );
   assert.throws(

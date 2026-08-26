@@ -45,6 +45,7 @@ function capability(
         taskId: 'task-1',
       },
       mailboxIds: ['personal@example.com', 'work@example.com'],
+      providers: ['gmail', 'microsoft'],
       messageIds: ['gmail-1', 'outlook-1'],
       operations,
       issuedAt: '2026-08-25T12:00:00.000Z',
@@ -77,7 +78,9 @@ function request(
   };
 }
 
-function engine(adapter = new MockMailboxAdapter([gmailMessage, microsoftMessage])) {
+function engine(
+  adapter = new MockMailboxAdapter([gmailMessage, microsoftMessage]),
+) {
   return new BrokerEngine({
     secret,
     allowedSlackUser: 'U123',
@@ -205,7 +208,11 @@ test('rejects revoked grants, over-quota actions, and wrong-provider operations'
 
   const quotaBroker = engine();
   const quotaToken = capability(['messages.trash'], { maxActions: 1 });
-  quotaBroker.execute({ ...trash, capability: quotaToken, idempotencyKey: 'quota-trash-001' });
+  quotaBroker.execute({
+    ...trash,
+    capability: quotaToken,
+    idempotencyKey: 'quota-trash-001',
+  });
   assert.throws(
     () =>
       quotaBroker.execute({

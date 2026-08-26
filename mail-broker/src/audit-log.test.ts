@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -37,7 +43,10 @@ test('writes a hash-chained append-only audit journal and verified digest', () =
       'rejected:mail_action_rejected': 1,
     });
     assert.equal(log.digest().verified, true);
-    assert.equal(readFileSync(path, { encoding: 'utf8' }).includes('token'), false);
+    assert.equal(
+      readFileSync(path, { encoding: 'utf8' }).includes('token'),
+      false,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -53,7 +62,10 @@ test('fails closed when an audit entry is modified or appended out of chain', ()
       outcome: 'alert',
       reasonCode: 'repeated_denials',
     });
-    writeFileSync(path, readFileSync(path, 'utf8').replace('repeated_denials', 'hidden'));
+    writeFileSync(
+      path,
+      readFileSync(path, 'utf8').replace('repeated_denials', 'hidden'),
+    );
     assert.throws(() => new AppendOnlyAuditLog(path), /verification failed/);
 
     writeFileSync(path, '');

@@ -6,6 +6,7 @@ export interface MailAuditInput {
     | 'mail_action_authorized'
     | 'mail_action_completed'
     | 'mail_action_rejected'
+    | 'mail_grant_issued'
     | 'mail_security_alert';
   timestamp?: string;
   mailboxId?: string;
@@ -16,12 +17,15 @@ export interface MailAuditInput {
   modelVersion?: string;
   grantId?: string;
   taskId?: string;
+  requestId?: string;
   userId?: string;
   outcome: 'authorized' | 'completed' | 'rejected' | 'alert';
   affected?: number;
 }
 
-export interface MailAuditEvent extends Required<Pick<MailAuditInput, 'event' | 'outcome'>> {
+export interface MailAuditEvent extends Required<
+  Pick<MailAuditInput, 'event' | 'outcome'>
+> {
   version: 1;
   eventId: string;
   timestamp: string;
@@ -33,6 +37,7 @@ export interface MailAuditEvent extends Required<Pick<MailAuditInput, 'event' | 
   modelVersion?: string;
   grantId?: string;
   taskId?: string;
+  requestId?: string;
   userId?: string;
   affected?: number;
   previousHash: string;
@@ -74,6 +79,7 @@ export class AppendOnlyAuditLog {
       modelVersion: input.modelVersion,
       grantId: input.grantId,
       taskId: input.taskId,
+      requestId: input.requestId,
       userId: input.userId,
       affected: input.affected,
       previousHash: this.previousHash,
@@ -121,5 +127,9 @@ export class AppendOnlyAuditLog {
       latestHash: events.at(-1)?.hash || ZERO_HASH,
       counts,
     };
+  }
+
+  hasRequestId(requestId: string): boolean {
+    return this.readAndVerify().some((event) => event.requestId === requestId);
   }
 }

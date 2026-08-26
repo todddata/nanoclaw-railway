@@ -14,7 +14,9 @@ export class MockMailboxAdapter {
     for (const message of seed) this.put(message);
   }
 
-  private key(message: Pick<MockMessageView, 'provider' | 'mailboxId' | 'messageId'>): string {
+  private key(
+    message: Pick<MockMessageView, 'provider' | 'mailboxId' | 'messageId'>,
+  ): string {
     return `${message.provider}\u0000${message.mailboxId}\u0000${message.messageId}`;
   }
 
@@ -55,13 +57,17 @@ export class MockMailboxAdapter {
         this.put({ ...message, labels: [...labels] });
       }
     } else if (action.operation === 'messages.trash') {
-      for (const message of candidates) this.put({ ...message, location: 'trash' });
+      for (const message of candidates)
+        this.put({ ...message, location: 'trash' });
     } else if (action.operation === 'messages.untrash') {
-      for (const message of candidates) this.put({ ...message, location: 'inbox' });
+      for (const message of candidates)
+        this.put({ ...message, location: 'inbox' });
     } else if (action.operation === 'messages.move_deleted') {
-      for (const message of candidates) this.put({ ...message, location: 'deleted' });
+      for (const message of candidates)
+        this.put({ ...message, location: 'deleted' });
     } else if (action.operation === 'messages.restore') {
-      for (const message of candidates) this.put({ ...message, location: 'inbox' });
+      for (const message of candidates)
+        this.put({ ...message, location: 'inbox' });
     }
 
     return {
@@ -70,7 +76,8 @@ export class MockMailboxAdapter {
       operation: action.operation,
       affected: candidates.length,
       messages:
-        action.operation === 'messages.list' || action.operation === 'messages.get'
+        action.operation === 'messages.list' ||
+        action.operation === 'messages.get'
           ? candidates
           : undefined,
     };
